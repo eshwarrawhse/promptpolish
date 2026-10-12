@@ -7,7 +7,28 @@ const SYSTEM_PROMPTS = {
     "You are an expert prompt engineer. The user has written rough notes describing what they want from an LLM. Extract their core intent and write the most effective possible prompt from scratch. Use best practices: clear role, specific context, explicit constraints, desired output format. Your version can be completely different from their original wording. Return only the final prompt, no explanation, no preamble."
 };
 
-const GEMINI_MODEL = 'gemini-1.5-flash';
+// Tried in order; the next one is used if Google reports a model as not found (retired).
+const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-2.5-flash'];
+
+function callGemini(model, apiKey, systemPrompt, text) {
+  return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey
+    },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ role: 'user', parts: [{ text }] }],
+      generationConfig: {
+        temperature: 0.4,
+        maxOutputTokens: 800,
+        // 2.5 models "think" by default, which would eat into the 800-token output budget.
+        ...(model.startsWith('gemini-2.5') && { thinkingConfig: { thinkingBudget: 0 } })
+      }
+    })
+  });
+}
 
 async function rewrite(text, mode) {
   const { api_key } = await chrome.storage.local.get('api_key');
@@ -19,21 +40,11 @@ async function rewrite(text, mode) {
   if (!systemPrompt) return { error: `Unknown mode: ${mode}` };
 
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': api_key
-        },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: [{ role: 'user', parts: [{ text }] }],
-          generationConfig: { temperature: 0.4, maxOutputTokens: 800 }
-        })
-      }
-    );
+    let res;
+    for (const model of GEMINI_MODELS) {
+      res = await callGemini(model, api_key, systemPrompt, text);
+      if (res.status !== 404) break;
+    }
 
     const data = await res.json().catch(() => null);
     if (!res.ok) {
