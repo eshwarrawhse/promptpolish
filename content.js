@@ -2,16 +2,21 @@
   const MIN_LENGTH = 10;
   const MAX_WORDS = 500;
   const MODES = [
-    { id: 'touchup', label: 'Touch up' },
-    { id: 'improve', label: 'Improve' },
-    { id: 'rewrite', label: 'Rewrite' }
+    { id: 'touchup', label: 'touch up' },
+    { id: 'improve', label: 'improve' },
+    { id: 'rewrite', label: 'rewrite' }
   ];
+  const CUSTOM_MODE = { id: 'custom', label: 'custom' };
+  const UNDO_WINDOW_MS = 5000;
 
   let pillHost = null;   // element in the page that hosts the pill's shadow root
   let pillRoot = null;   // shadow root (isolates pill styles from the site's CSS)
   let target = null;     // { type: 'textarea' | 'contenteditable', el, start, end, range, text }
   let loading = false;
   let dismissTimer = null;
+  let customPrompt = '';   // mirrors chrome.storage.local.custom_prompt
+  let lastRewrite = null;  // { element, type, originalValue, selectionStart, selectionEnd }
+  let undoTimer = null;
 
   // ---------- Selection detection ----------
 
@@ -114,6 +119,19 @@
 
   const PILL_CSS = `
     :host { all: initial; }
+    .wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+      text-transform: lowercase;
+      user-select: none;
+      animation: pp-fade-in 150ms ease-out;
+    }
+    @keyframes pp-fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
     .pill {
       display: flex;
       align-items: center;
@@ -122,13 +140,6 @@
       border-radius: 999px;
       padding: 6px 10px;
       box-shadow: 0 2px 12px rgba(255, 140, 0, 0.4);
-      font-family: system-ui, -apple-system, sans-serif;
-      user-select: none;
-      animation: pp-fade-in 150ms ease-out;
-    }
-    @keyframes pp-fade-in {
-      from { opacity: 0; }
-      to { opacity: 1; }
     }
     button {
       background: none;
@@ -137,17 +148,53 @@
       color: #000;
       font-size: 12px;
       font-family: inherit;
+      text-transform: lowercase;
       cursor: pointer;
       padding: 4px 8px;
       line-height: 1.2;
       border-radius: 6px;
       transition: background 120ms ease;
     }
-    button:last-child { border-right: none; }
-    button:hover { background: #E07B00; }
+    .pill button:last-child { border-right: none; }
+    .pill button:hover { background: #E07B00; }
     button:disabled { cursor: default; opacity: 0.7; }
-    button:disabled:hover { background: none; }
+    .pill button:disabled:hover { background: none; }
     button.loading { display: inline-flex; align-items: center; justify-content: center; opacity: 1; }
+
+    /* Custom mode: outlined, sits next to the solid pill. */
+    .custom {
+      position: relative;
+      background: transparent;
+      border: 1px solid #FF8C00;
+      border-radius: 999px;
+      color: #FF8C00;
+      font-weight: 500;
+      padding: 9px 16px;
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      box-shadow: 0 2px 12px rgba(255, 140, 0, 0.25);
+      transition: background 120ms ease;
+    }
+    .custom:hover { background: rgba(255, 140, 0, 0.12); }
+    .custom.off {
+      border-color: #777;
+      color: #888;
+      box-shadow: none;
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .custom.off:hover { background: transparent; }
+    .star {
+      position: absolute;
+      line-height: 1;
+      pointer-events: none;
+    }
+    /* Hand-placed, not a grid: two above, two below, offset and unevenly sized. */
+    .star.s1 { top: 1px; left: 8px; font-size: 0.5em; }
+    .star.s2 { top: -2px; left: 58%; font-size: 0.6em; }
+    .star.s3 { bottom: 1px; left: 30%; font-size: 0.5em; }
+    .star.s4 { bottom: 4px; right: 5px; font-size: 0.5em; }
+
     .spinner {
       width: 10px;
       height: 10px;
@@ -155,6 +202,10 @@
       border-top-color: #000;
       border-radius: 50%;
       animation: pp-spin 600ms linear infinite;
+    }
+    .custom .spinner {
+      border-color: rgba(255, 140, 0, 0.3);
+      border-top-color: #FF8C00;
     }
     @keyframes pp-spin {
       to { transform: rotate(360deg); }
@@ -189,6 +240,33 @@
     .link:hover { color: #3a1f00; }
   `;
 
+  // ---------- Font + custom prompt ----------
+
+  // Load Space Grotesk from the extension package. Using the bytes directly (instead of a
+  // Google Fonts URL) means the site's Content-Security-Policy can't block it.
+  let fontRequested = false;
+  function loadFont() {
+    if (fontRequested || !document.fonts) return;
+    fontRequested = true;
+    fetch(chrome.runtime.getURL('fonts/SpaceGrotesk-latin.woff2'))
+      .then((r) => r.arrayBuffer())
+      .then((buf) => new FontFace('Space Grotesk', buf, { weight: '300 700' }).load())
+      .then((face) => document.fonts.add(face))
+      .catch(() => { /* falls back to system-ui */ });
+  }
+
+  try {
+    chrome.storage.local.get('custom_prompt', ({ custom_prompt }) => {
+      customPrompt = (custom_prompt || '').trim();
+    });
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes.custom_prompt) {
+        customPrompt = (changes.custom_prompt.newValue || '').trim();
+        updateCustomButton();
+      }
+    });
+  } catch (_) { /* extension context gone */ }
+
   function countWords(text) {
     return text.trim().split(/\s+/).filter(Boolean).length;
   }
@@ -205,50 +283,83 @@
     });
     pillRoot = pillHost.attachShadow({ mode: 'open' });
 
+    loadFont();
     const style = document.createElement('style');
     style.textContent = PILL_CSS;
-    const pill = document.createElement('div');
-    pill.className = 'pill';
-    pillRoot.append(style, pill);
+    const wrap = document.createElement('div');
+    wrap.className = 'wrap';
+    pillRoot.append(style, wrap);
     (document.body || document.documentElement).appendChild(pillHost);
 
-    if (wordCount > MAX_WORDS) renderLongTextWarning(pill, rect);
-    else renderButtons(pill);
+    if (wordCount > MAX_WORDS) renderLongTextWarning(wrap, rect);
+    else renderButtons(wrap);
     positionPill(rect);
   }
 
-  function renderButtons(pill) {
-    pill.className = 'pill';
-    pill.textContent = '';
-    MODES.forEach(({ id, label }) => {
-      const btn = document.createElement('button');
-      btn.textContent = label;
-      btn.dataset.mode = id;
-      // Prevent the click from stealing focus / collapsing the selection in the input.
-      btn.addEventListener('mousedown', (e) => e.preventDefault());
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        handleModeClick(id, btn);
-      });
-      pill.appendChild(btn);
+  function makeButton(mode, className) {
+    const btn = document.createElement('button');
+    if (className) btn.className = className;
+    btn.dataset.mode = mode.id;
+    // Prevent the click from stealing focus / collapsing the selection in the input.
+    btn.addEventListener('mousedown', (e) => e.preventDefault());
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (btn.classList.contains('off')) return;
+      handleModeClick(mode.id, btn);
     });
+    return btn;
   }
 
-  function renderLongTextWarning(pill, rect) {
+  function renderButtons(wrap) {
+    wrap.textContent = '';
+    const pill = document.createElement('div');
+    pill.className = 'pill';
+    MODES.forEach((mode) => {
+      const btn = makeButton(mode);
+      btn.textContent = mode.label;
+      pill.appendChild(btn);
+    });
+
+    const custom = makeButton(CUSTOM_MODE, 'custom');
+    ['s1', 's2', 's3', 's4'].forEach((cls) => {
+      const star = document.createElement('span');
+      star.className = `star ${cls}`;
+      star.textContent = '✦';
+      custom.appendChild(star);
+    });
+    custom.appendChild(document.createTextNode(CUSTOM_MODE.label));
+
+    wrap.append(pill, custom);
+    updateCustomButton();
+  }
+
+  // Grey out the custom button (but keep its tooltip working) when no prompt is saved.
+  function updateCustomButton() {
+    const btn = pillRoot && pillRoot.querySelector('.custom');
+    if (!btn || btn.classList.contains('loading')) return;
+    const off = !customPrompt;
+    btn.classList.toggle('off', off);
+    btn.setAttribute('aria-disabled', String(off));
+    btn.title = off ? 'set a custom prompt in the extension settings' : customPrompt;
+  }
+
+  function renderLongTextWarning(wrap, rect) {
+    wrap.textContent = '';
+    const pill = document.createElement('div');
     pill.className = 'pill tall';
-    pill.textContent = '';
+    wrap.appendChild(pill);
     const notice = document.createElement('span');
     notice.className = 'notice';
-    notice.textContent = `Best for short prompts (${MAX_WORDS} words max)`;
+    notice.textContent = `best for short prompts (${MAX_WORDS} words max)`;
     const link = document.createElement('span');
     link.className = 'link';
-    link.textContent = 'Rewrite anyway';
+    link.textContent = 'rewrite anyway';
     link.addEventListener('mousedown', (e) => e.preventDefault());
     link.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      renderButtons(pill);
+      renderButtons(wrap);
       positionPill(rect);
     });
     pill.append(notice, link);
@@ -297,9 +408,11 @@
   function showMessage(className, text, ms) {
     if (!pillRoot) return;
     loading = false;
-    const pill = pillRoot.querySelector('.pill');
+    const wrap = pillRoot.querySelector('.wrap');
+    wrap.textContent = '';
+    const pill = document.createElement('div');
     pill.className = 'pill';
-    pill.textContent = '';
+    wrap.appendChild(pill);
     const msg = document.createElement('span');
     msg.className = className;
     msg.textContent = text;
@@ -313,8 +426,8 @@
   }
 
   function showDone(tokens, mode) {
-    const label = MODES.find((m) => m.id === mode)?.label || mode;
-    const count = Number.isFinite(tokens) ? `${tokens} tokens` : 'Done';
+    const label = [...MODES, CUSTOM_MODE].find((m) => m.id === mode)?.label || mode;
+    const count = Number.isFinite(tokens) ? `${tokens} tokens` : 'done';
     showMessage('done', `⚡ ${count} · ${label}`, 1500);
   }
 
@@ -329,22 +442,22 @@
     try {
       sent = chrome.runtime.sendMessage({ action: 'rewrite', text: job.text, mode });
     } catch (err) {
-      showError('Extension was reloaded — refresh this page.');
+      showError('extension was reloaded — refresh this page.');
       return;
     }
 
     sent
       .then((res) => {
         if (!pillHost) return; // dismissed meanwhile
-        if (!res) return showError('No response from Polishd.');
+        if (!res) return showError('no response from polishd.');
         if (res.error) return showError(res.error);
         const ok = replaceSelection(job, res.result);
-        if (!ok) return showError('Could not replace text — the input changed.');
+        if (!ok) return showError('could not replace text — the input changed.');
         target = null;
         flashSuccess(job.el);
         showDone(res.tokens, mode);
       })
-      .catch((err) => showError(err?.message || 'Something went wrong.'));
+      .catch((err) => showError(err?.message || 'something went wrong.'));
   }
 
   // Briefly outline the input so the user sees the replacement happened.
@@ -367,9 +480,79 @@
 
   function replaceSelection(job, newText) {
     if (!job.el.isConnected) return false;
-    return job.type === 'textarea'
+    const snapshot = {
+      element: job.el,
+      type: job.type,
+      originalValue: job.type === 'textarea' ? job.el.value : job.el.innerText,
+      selectionStart: job.type === 'textarea' ? job.start : null,
+      selectionEnd: job.type === 'textarea' ? job.end : null
+    };
+    const ok = job.type === 'textarea'
       ? replaceInTextarea(job, newText)
       : replaceInContentEditable(job, newText);
+    if (ok) armUndo(snapshot);
+    return ok;
+  }
+
+  // ---------- Undo (Ctrl/Cmd+Z within 5s restores the original text) ----------
+
+  function armUndo(snapshot) {
+    clearUndo();
+    lastRewrite = snapshot;
+    window.addEventListener('keydown', onUndoKey, true);
+    // Typing after the rewrite means the user has moved on; let normal undo handle it.
+    snapshot.element.addEventListener('beforeinput', clearUndo, { once: true });
+    undoTimer = setTimeout(clearUndo, UNDO_WINDOW_MS);
+  }
+
+  function clearUndo() {
+    clearTimeout(undoTimer);
+    window.removeEventListener('keydown', onUndoKey, true);
+    if (lastRewrite) lastRewrite.element.removeEventListener('beforeinput', clearUndo);
+    lastRewrite = null;
+  }
+
+  function onUndoKey(e) {
+    const isUndo = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z';
+    if (!isUndo || !lastRewrite) return;
+    const snap = lastRewrite;
+    clearUndo();
+    if (!snap.element.isConnected) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    restoreOriginal(snap);
+  }
+
+  function restoreOriginal(snap) {
+    const el = snap.element;
+    el.focus();
+    if (snap.type === 'textarea') {
+      el.select();
+      let ok = false;
+      try {
+        ok = document.execCommand('insertText', false, snap.originalValue) && el.value === snap.originalValue;
+      } catch (_) { ok = false; }
+      if (!ok) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(el, snap.originalValue);
+      }
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.setSelectionRange(snap.selectionStart, snap.selectionEnd);
+      return;
+    }
+
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    let ok = false;
+    try { ok = document.execCommand('insertText', false, snap.originalValue); } catch (_) { ok = false; }
+    if (!ok) {
+      console.warn('[polishd] execCommand unavailable; restoring text directly.');
+      el.innerText = snap.originalValue;
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: snap.originalValue }));
+    }
   }
 
   function replaceInTextarea(job, newText) {
@@ -396,7 +579,7 @@
     }
 
     if (!inserted) {
-      console.warn('[Polishd] execCommand unavailable; replacing value directly (Ctrl+Z will not undo this).');
+      console.warn('[polishd] execCommand unavailable; replacing value directly (Ctrl+Z will not undo this).');
       // Use the native setter so React's value tracker notices the change.
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
       setter.call(ta, expected);
@@ -417,7 +600,7 @@
     if (document.execCommand('insertText', false, newText)) return true;
 
     // Fallback: plain DOM replacement + input event.
-    console.warn('[Polishd] execCommand unavailable; replacing text directly (Ctrl+Z will not undo this).');
+    console.warn('[polishd] execCommand unavailable; replacing text directly (Ctrl+Z will not undo this).');
     const range = sel.getRangeAt(0);
     range.deleteContents();
     range.insertNode(document.createTextNode(newText));

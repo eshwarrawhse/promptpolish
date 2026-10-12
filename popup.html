@@ -2,7 +2,10 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Polishd</title>
+  <title>polishd</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet" />
   <style>
     * { box-sizing: border-box; }
     body {
@@ -11,9 +14,13 @@
       padding: 20px;
       background: #111;
       color: #fff;
-      font-family: system-ui, -apple-system, sans-serif;
+      font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
       font-size: 13px;
+      text-transform: lowercase;
     }
+    /* Typed values keep their real case; only the UI text is lowercase. */
+    input, textarea { text-transform: none; font-family: inherit; }
+    ::placeholder { text-transform: lowercase; color: #666; }
     .header {
       text-align: center;
       margin-bottom: 20px;
@@ -41,7 +48,8 @@
       color: #bbb;
       font-size: 12px;
     }
-    input {
+    input, textarea {
+      display: block;
       width: 100%;
       padding: 8px;
       background: #222;
@@ -52,7 +60,18 @@
       outline: none;
       transition: border-color 150ms ease;
     }
-    input:focus { border-color: #FF8C00; }
+    input:focus, textarea:focus { border-color: #FF8C00; }
+    textarea {
+      min-height: 64px;
+      resize: vertical;
+      line-height: 1.4;
+    }
+    .section {
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid #222;
+    }
+    .section label { font-size: 11px; color: #999; }
     button {
       width: 100%;
       margin-top: 12px;
@@ -63,12 +82,14 @@
       border-radius: 6px;
       font-size: 13px;
       font-weight: 600;
+      font-family: inherit;
+      text-transform: lowercase;
       cursor: pointer;
       transition: filter 150ms ease, transform 150ms ease;
     }
     button:hover { filter: brightness(1.1); }
     button:active { transform: scale(0.98); }
-    #status {
+    .status {
       min-height: 16px;
       margin-top: 10px;
       font-size: 12px;
@@ -80,13 +101,20 @@
 <body>
   <div class="header">
     <div class="logo" aria-hidden="true">&#x26A1;&#xFE0E;</div>
-    <div class="title">Polishd</div>
-    <div class="tagline">Rewrite prompts instantly</div>
+    <div class="title">polishd</div>
+    <div class="tagline">rewrite prompts instantly</div>
   </div>
-  <label for="key">Gemini API Key</label>
-  <input id="key" type="password" placeholder="AIza..." autocomplete="off" spellcheck="false" />
-  <button id="save">Save</button>
-  <div id="status"></div>
+  <label for="key">gemini api key</label>
+  <input id="key" type="password" placeholder="paste your gemini api key" autocomplete="off" spellcheck="false" />
+  <button id="save">save</button>
+  <div id="status" class="status"></div>
+
+  <div class="section">
+    <label for="custom">custom mode prompt</label>
+    <textarea id="custom" placeholder="e.g. rewrite this as a tweet thread" spellcheck="false"></textarea>
+    <button id="save-custom">save prompt</button>
+    <div id="custom-status" class="status"></div>
+  </div>
   <script src="popup.js"></script>
 </body>
 </html>

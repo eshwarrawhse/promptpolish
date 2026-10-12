@@ -4,7 +4,14 @@ const SYSTEM_PROMPTS = {
   improve:
     "You are a prompt engineer. The user has written a rough prompt draft. Improve it into a well-structured LLM prompt. Keep the core intent and topic. You may rephrase for clarity. Add a role, context, or output format instruction if clearly missing and helpful. Do not add constraints or requirements that aren't implied by the original. Return only the improved prompt, no explanation.",
   rewrite:
-    "You are an expert prompt engineer. The user has written rough notes describing what they want from an LLM. Extract their core intent and write the most effective possible prompt from scratch. Keep the output to 3-6 sentences maximum. Do not use headers, bullet points, or numbered lists. Return only the final prompt as plain prose, no explanation, no preamble."
+    "You are an expert prompt engineer. The user has written rough notes describing what they want from an LLM. Extract their core intent and write the most effective possible prompt from scratch. Keep the output to 3-6 sentences maximum. Do not use headers, bullet points, or numbered lists. Return only the final prompt as plain prose, no explanation, no preamble.",
+  // Loaded from storage at call time so edits in the popup apply immediately.
+  custom: async () => {
+    const { custom_prompt } = await chrome.storage.local.get('custom_prompt');
+    const instruction = (custom_prompt || '').trim();
+    if (!instruction) return null;
+    return `The user will give you a piece of text. Transform it according to this instruction: ${instruction}\n\nReturn only the result, no explanation, no preamble.`;
+  }
 };
 
 // Tried in order; the next one is used if Google reports a model as not found (retired).
@@ -36,8 +43,10 @@ async function rewrite(text, mode) {
     return { error: 'No API key set. Click the extension icon to add your Gemini key.' };
   }
 
-  const systemPrompt = SYSTEM_PROMPTS[mode];
-  if (!systemPrompt) return { error: `Unknown mode: ${mode}` };
+  const entry = SYSTEM_PROMPTS[mode];
+  if (!entry) return { error: `Unknown mode: ${mode}` };
+  const systemPrompt = typeof entry === 'function' ? await entry() : entry;
+  if (!systemPrompt) return { error: 'No custom prompt set' };
 
   try {
     let res;

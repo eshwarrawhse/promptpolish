@@ -43,5 +43,19 @@
   },
   "icons": {
     "128": "icon.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "fonts/*.woff2"
+      ],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://www.perplexity.ai/*",
+        "https://gemini.google.com/*",
+        "https://www.notion.so/*"
+      ]
+    }
+  ]
 }
