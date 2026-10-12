@@ -1,5 +1,5 @@
 const SYSTEM_PROMPTS = {
-  preserve:
+  touchup:
     "You are a prompt editor. The user has written a rough prompt draft. Fix grammar errors and ambiguous phrasing only. Do not change the person's vocabulary, sentence structure, or tone. Do not add ideas, formatting, or instructions they didn't write. Return only the edited prompt, no explanation.",
   improve:
     "You are a prompt engineer. The user has written a rough prompt draft. Improve it into a well-structured LLM prompt. Keep the core intent and topic. You may rephrase for clarity. Add a role, context, or output format instruction if clearly missing and helpful. Do not add constraints or requirements that aren't implied by the original. Return only the improved prompt, no explanation.",

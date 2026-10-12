@@ -2,7 +2,7 @@
   const MIN_LENGTH = 10;
   const MAX_WORDS = 500;
   const MODES = [
-    { id: 'preserve', label: 'Preserve' },
+    { id: 'touchup', label: 'Touch up' },
     { id: 'improve', label: 'Improve' },
     { id: 'rewrite', label: 'Rewrite' }
   ];
@@ -336,7 +336,7 @@
     sent
       .then((res) => {
         if (!pillHost) return; // dismissed meanwhile
-        if (!res) return showError('No response from PromptPolish.');
+        if (!res) return showError('No response from Polishd.');
         if (res.error) return showError(res.error);
         const ok = replaceSelection(job, res.result);
         if (!ok) return showError('Could not replace text — the input changed.');
@@ -396,7 +396,7 @@
     }
 
     if (!inserted) {
-      console.warn('[PromptPolish] execCommand unavailable; replacing value directly (Ctrl+Z will not undo this).');
+      console.warn('[Polishd] execCommand unavailable; replacing value directly (Ctrl+Z will not undo this).');
       // Use the native setter so React's value tracker notices the change.
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
       setter.call(ta, expected);
@@ -417,7 +417,7 @@
     if (document.execCommand('insertText', false, newText)) return true;
 
     // Fallback: plain DOM replacement + input event.
-    console.warn('[PromptPolish] execCommand unavailable; replacing text directly (Ctrl+Z will not undo this).');
+    console.warn('[Polishd] execCommand unavailable; replacing text directly (Ctrl+Z will not undo this).');
     const range = sel.getRangeAt(0);
     range.deleteContents();
     range.insertNode(document.createTextNode(newText));
