@@ -7,9 +7,9 @@ function showStatus(text, ok) {
   status.className = ok ? 'ok' : 'err';
 }
 
-chrome.storage.local.get('openai_key', ({ openai_key }) => {
-  if (openai_key) {
-    input.placeholder = '••••••••' + openai_key.slice(-4);
+chrome.storage.local.get('api_key', ({ api_key }) => {
+  if (api_key) {
+    input.placeholder = '••••••••' + api_key.slice(-4);
   }
 });
 
@@ -19,7 +19,7 @@ function save() {
     showStatus('Please enter an API key', false);
     return;
   }
-  chrome.storage.local.set({ openai_key: key }, () => {
+  chrome.storage.local.set({ api_key: key }, () => {
     if (chrome.runtime.lastError) {
       showStatus(chrome.runtime.lastError.message, false);
       return;

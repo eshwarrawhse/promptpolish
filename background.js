@@ -7,41 +7,46 @@ const SYSTEM_PROMPTS = {
     "You are an expert prompt engineer. The user has written rough notes describing what they want from an LLM. Extract their core intent and write the most effective possible prompt from scratch. Use best practices: clear role, specific context, explicit constraints, desired output format. Your version can be completely different from their original wording. Return only the final prompt, no explanation, no preamble."
 };
 
+const GEMINI_MODEL = 'gemini-1.5-flash';
+
 async function rewrite(text, mode) {
-  const { openai_key } = await chrome.storage.local.get('openai_key');
-  if (!openai_key) {
-    return { error: 'No API key set. Click the extension icon to add your OpenAI key.' };
+  const { api_key } = await chrome.storage.local.get('api_key');
+  if (!api_key) {
+    return { error: 'No API key set. Click the extension icon to add your Gemini key.' };
   }
 
   const systemPrompt = SYSTEM_PROMPTS[mode];
   if (!systemPrompt) return { error: `Unknown mode: ${mode}` };
 
   try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${openai_key}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        temperature: 0.4,
-        max_tokens: 800,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: text }
-        ]
-      })
-    });
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': api_key
+        },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: 'user', parts: [{ text }] }],
+          generationConfig: { temperature: 0.4, maxOutputTokens: 800 }
+        })
+      }
+    );
 
     const data = await res.json().catch(() => null);
     if (!res.ok) {
-      const msg = data?.error?.message || `OpenAI API error (${res.status})`;
-      return { error: res.status === 401 ? 'Invalid API key. Update it in the extension popup.' : msg };
+      const msg = data?.error?.message || `Gemini API error (${res.status})`;
+      const badKey = /api key/i.test(msg) || res.status === 401 || res.status === 403;
+      return { error: badKey ? 'Invalid API key. Update it in the extension popup.' : msg };
     }
 
-    const result = data?.choices?.[0]?.message?.content?.trim();
-    if (!result) return { error: 'Empty response from OpenAI.' };
+    const result = (data?.candidates?.[0]?.content?.parts || [])
+      .map((p) => p.text || '')
+      .join('')
+      .trim();
+    if (!result) return { error: 'Empty response from Gemini.' };
     return { result };
   } catch (err) {
     return { error: `Network error: ${err.message}` };
