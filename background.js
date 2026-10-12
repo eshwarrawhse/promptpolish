@@ -58,7 +58,7 @@ async function rewrite(text, mode) {
       .join('')
       .trim();
     if (!result) return { error: 'Empty response from Gemini.' };
-    return { result };
+    return { result, tokens: data?.usageMetadata?.candidatesTokenCount };
   } catch (err) {
     return { error: `Network error: ${err.message}` };
   }

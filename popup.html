@@ -15,27 +15,20 @@
       font-size: 13px;
     }
     .header {
-      display: flex;
-      align-items: center;
-      gap: 10px;
+      text-align: center;
       margin-bottom: 20px;
     }
     .logo {
-      flex: none;
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
-      background: linear-gradient(135deg, #2563eb, #7c3aed);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
+      font-size: 32px;
+      line-height: 1;
+      color: #FF8C00;
+      margin-bottom: 8px;
     }
-    .logo svg { width: 18px; height: 18px; }
     .title {
-      font-size: 15px;
+      font-size: 16px;
       font-weight: 600;
       letter-spacing: -0.01em;
+      color: #FF8C00;
     }
     .tagline {
       margin-top: 2px;
@@ -59,43 +52,36 @@
       outline: none;
       transition: border-color 150ms ease;
     }
-    input:focus { border-color: #2563eb; }
+    input:focus { border-color: #FF8C00; }
     button {
       width: 100%;
       margin-top: 12px;
       padding: 9px;
-      background: #2563eb;
-      color: #fff;
+      background: #FF8C00;
+      color: #000;
       border: none;
       border-radius: 6px;
       font-size: 13px;
-      font-weight: 500;
+      font-weight: 600;
       cursor: pointer;
       transition: filter 150ms ease, transform 150ms ease;
     }
-    button:hover { filter: brightness(1.15); }
+    button:hover { filter: brightness(1.1); }
     button:active { transform: scale(0.98); }
     #status {
       min-height: 16px;
       margin-top: 10px;
       font-size: 12px;
     }
-    .ok { color: #22c55e; }
+    .ok { color: #FF8C00; }
     .err { color: #ef4444; }
   </style>
 </head>
 <body>
   <div class="header">
-    <div class="logo" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="#fff">
-        <path d="M12 2l1.9 6.1L20 10l-6.1 1.9L12 18l-1.9-6.1L4 10l6.1-1.9z" />
-        <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" opacity="0.7" />
-      </svg>
-    </div>
-    <div>
-      <div class="title">PromptPolish</div>
-      <div class="tagline">Rewrite prompts instantly</div>
-    </div>
+    <div class="logo" aria-hidden="true">&#x26A1;&#xFE0E;</div>
+    <div class="title">PromptPolish</div>
+    <div class="tagline">Rewrite prompts instantly</div>
   </div>
   <label for="key">Gemini API Key</label>
   <input id="key" type="password" placeholder="AIza..." autocomplete="off" spellcheck="false" />

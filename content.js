@@ -1,5 +1,6 @@
 (() => {
   const MIN_LENGTH = 10;
+  const MAX_WORDS = 500;
   const MODES = [
     { id: 'preserve', label: 'Preserve' },
     { id: 'improve', label: 'Improve' },
@@ -10,15 +11,28 @@
   let pillRoot = null;   // shadow root (isolates pill styles from the site's CSS)
   let target = null;     // { type: 'textarea' | 'contenteditable', el, start, end, range, text }
   let loading = false;
-  let errorTimer = null;
+  let dismissTimer = null;
 
   // ---------- Selection detection ----------
 
+  function isEditable(el) {
+    if (el.isContentEditable) return true;
+    const attr = el.getAttribute('contenteditable');
+    return attr !== null && attr !== 'false';
+  }
+
+  // Walk up the whole ancestor chain (Claude/ChatGPT nest the text many levels deep inside
+  // the editor) and return the outermost editable element that contains the node.
   function getEditingHost(node) {
     let el = node && (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement);
-    if (!el || !el.isContentEditable) return null;
-    while (el.parentElement && el.parentElement.isContentEditable) el = el.parentElement;
-    return el;
+    let host = null;
+    while (el) {
+      if (el.tagName === 'TEXTAREA') return el;
+      if (isEditable(el)) host = el;
+      else if (host) break;
+      el = el.parentElement;
+    }
+    return host;
   }
 
   // Returns a description of the current selection if it's inside an editable prompt input.
@@ -26,10 +40,9 @@
     // Textareas don't expose their selection through window.getSelection() ranges,
     // so check the focused element first.
     const active = document.activeElement;
-    if (active && active.tagName === 'TEXTAREA') {
+    if (active && active.tagName === 'TEXTAREA' && active.selectionStart !== active.selectionEnd) {
       const start = active.selectionStart;
       const end = active.selectionEnd;
-      if (start === end) return null;
       const text = active.value.slice(start, end);
       return {
         type: 'textarea',
@@ -44,7 +57,7 @@
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
     const host = getEditingHost(sel.anchorNode);
-    if (!host || !host.contains(sel.focusNode)) return null;
+    if (!host || host.tagName === 'TEXTAREA' || !host.contains(sel.focusNode)) return null;
 
     const range = sel.getRangeAt(0);
     let rect = range.getBoundingClientRect();
@@ -104,10 +117,11 @@
     .pill {
       display: flex;
       align-items: center;
-      background: #1a1a1a;
+      background: #FF8C00;
+      color: #000;
       border-radius: 999px;
       padding: 6px 10px;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(255, 255, 255, 0.06);
+      box-shadow: 0 2px 12px rgba(255, 140, 0, 0.4);
       font-family: system-ui, -apple-system, sans-serif;
       user-select: none;
       animation: pp-fade-in 150ms ease-out;
@@ -119,25 +133,26 @@
     button {
       background: none;
       border: none;
-      border-right: 1px solid #333;
-      color: #fff;
+      border-right: 1px solid rgba(0, 0, 0, 0.18);
+      color: #000;
       font-size: 12px;
       font-family: inherit;
       cursor: pointer;
       padding: 4px 8px;
       line-height: 1.2;
+      border-radius: 6px;
       transition: background 120ms ease;
     }
     button:last-child { border-right: none; }
-    button:hover { background: #333; }
+    button:hover { background: #E07B00; }
     button:disabled { cursor: default; opacity: 0.7; }
     button:disabled:hover { background: none; }
     button.loading { display: inline-flex; align-items: center; justify-content: center; opacity: 1; }
     .spinner {
       width: 10px;
       height: 10px;
-      border: 1.5px solid #555;
-      border-top-color: #fff;
+      border: 1.5px solid rgba(0, 0, 0, 0.25);
+      border-top-color: #000;
       border-radius: 50%;
       animation: pp-spin 600ms linear infinite;
     }
@@ -145,20 +160,46 @@
       to { transform: rotate(360deg); }
     }
     .error {
-      color: #ef4444;
+      color: #7a0000;
       font-size: 11px;
+      font-weight: 600;
       padding: 2px 6px;
       max-width: 320px;
     }
+    .done {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 2px 6px;
+      white-space: nowrap;
+    }
+    .pill.tall {
+      flex-direction: column;
+      border-radius: 14px;
+      padding: 8px 14px;
+      gap: 4px;
+    }
+    .notice { font-size: 11px; }
+    .link {
+      font-size: 11px;
+      font-weight: 600;
+      text-decoration: underline;
+      cursor: pointer;
+      color: #000;
+    }
+    .link:hover { color: #3a1f00; }
   `;
 
-  function showPill(rect) {
+  function countWords(text) {
+    return text.trim().split(/\s+/).filter(Boolean).length;
+  }
+
+  function showPill(rect, wordCount) {
     removePill();
 
     pillHost = document.createElement('div');
     Object.assign(pillHost.style, {
       position: 'fixed',
-      zIndex: '999999',
+      zIndex: '2147483647',
       top: '0px',
       left: '0px'
     });
@@ -168,7 +209,17 @@
     style.textContent = PILL_CSS;
     const pill = document.createElement('div');
     pill.className = 'pill';
+    pillRoot.append(style, pill);
+    (document.body || document.documentElement).appendChild(pillHost);
 
+    if (wordCount > MAX_WORDS) renderLongTextWarning(pill, rect);
+    else renderButtons(pill);
+    positionPill(rect);
+  }
+
+  function renderButtons(pill) {
+    pill.className = 'pill';
+    pill.textContent = '';
     MODES.forEach(({ id, label }) => {
       const btn = document.createElement('button');
       btn.textContent = label;
@@ -182,10 +233,25 @@
       });
       pill.appendChild(btn);
     });
+  }
 
-    pillRoot.append(style, pill);
-    document.documentElement.appendChild(pillHost);
-    positionPill(rect);
+  function renderLongTextWarning(pill, rect) {
+    pill.className = 'pill tall';
+    pill.textContent = '';
+    const notice = document.createElement('span');
+    notice.className = 'notice';
+    notice.textContent = `Best for short prompts (${MAX_WORDS} words max)`;
+    const link = document.createElement('span');
+    link.className = 'link';
+    link.textContent = 'Rewrite anyway';
+    link.addEventListener('mousedown', (e) => e.preventDefault());
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      renderButtons(pill);
+      positionPill(rect);
+    });
+    pill.append(notice, link);
   }
 
   function positionPill(rect) {
@@ -205,7 +271,7 @@
   }
 
   function removePill() {
-    clearTimeout(errorTimer);
+    clearTimeout(dismissTimer);
     if (pillHost) pillHost.remove();
     pillHost = null;
     pillRoot = null;
@@ -227,16 +293,29 @@
     });
   }
 
-  function showError(message) {
+  // Replace the pill's contents with a single message line, then auto-dismiss.
+  function showMessage(className, text, ms) {
     if (!pillRoot) return;
     loading = false;
     const pill = pillRoot.querySelector('.pill');
+    pill.className = 'pill';
     pill.textContent = '';
     const msg = document.createElement('span');
-    msg.className = 'error';
-    msg.textContent = message;
+    msg.className = className;
+    msg.textContent = text;
     pill.appendChild(msg);
-    errorTimer = setTimeout(removePill, 3000);
+    clearTimeout(dismissTimer);
+    dismissTimer = setTimeout(removePill, ms);
+  }
+
+  function showError(message) {
+    showMessage('error', message, 3000);
+  }
+
+  function showDone(tokens, mode) {
+    const label = MODES.find((m) => m.id === mode)?.label || mode;
+    const count = Number.isFinite(tokens) ? `${tokens} tokens` : 'Done';
+    showMessage('done', `⚡ ${count} · ${label}`, 1500);
   }
 
   // ---------- Rewrite flow ----------
@@ -261,14 +340,14 @@
         if (res.error) return showError(res.error);
         const ok = replaceSelection(job, res.result);
         if (!ok) return showError('Could not replace text — the input changed.');
-        removePill();
-        flashSuccess(job.el);
         target = null;
+        flashSuccess(job.el);
+        showDone(res.tokens, mode);
       })
       .catch((err) => showError(err?.message || 'Something went wrong.'));
   }
 
-  // Briefly outline the input in green so the user sees the replacement happened.
+  // Briefly outline the input so the user sees the replacement happened.
   function flashSuccess(el) {
     const prev = {
       outline: el.style.getPropertyValue('outline'),
@@ -277,7 +356,7 @@
       transition: el.style.getPropertyValue('transition')
     };
     el.style.setProperty('transition', 'outline-color 150ms ease');
-    el.style.setProperty('outline', '2px solid #22c55e', 'important');
+    el.style.setProperty('outline', '2px solid #FF8C00', 'important');
     el.style.setProperty('outline-offset', '2px');
     setTimeout(() => {
       el.style.setProperty('outline', prev.outline, prev.outlinePriority);
@@ -304,15 +383,27 @@
       end = idx + job.text.length;
     }
 
-    const value = ta.value.slice(0, start) + newText + ta.value.slice(end);
-    // Use the native setter so React's value tracker notices the change.
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
-    setter.call(ta, value);
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    const expected = ta.value.slice(0, start) + newText + ta.value.slice(end);
 
+    // execCommand goes through the browser's editing pipeline, so Ctrl+Z can undo it.
     ta.focus();
-    const caret = start + newText.length;
-    ta.setSelectionRange(caret, caret);
+    ta.setSelectionRange(start, end);
+    let inserted = false;
+    try {
+      inserted = document.execCommand('insertText', false, newText) && ta.value === expected;
+    } catch (_) {
+      inserted = false;
+    }
+
+    if (!inserted) {
+      console.warn('[PromptPolish] execCommand unavailable; replacing value directly (Ctrl+Z will not undo this).');
+      // Use the native setter so React's value tracker notices the change.
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(ta, expected);
+      const caret = start + newText.length;
+      ta.setSelectionRange(caret, caret);
+    }
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   }
 
@@ -326,6 +417,7 @@
     if (document.execCommand('insertText', false, newText)) return true;
 
     // Fallback: plain DOM replacement + input event.
+    console.warn('[PromptPolish] execCommand unavailable; replacing text directly (Ctrl+Z will not undo this).');
     const range = sel.getRangeAt(0);
     range.deleteContents();
     range.insertNode(document.createTextNode(newText));
@@ -349,19 +441,25 @@
       return;
     }
     target = info;
-    showPill(info.rect);
+    showPill(info.rect, countWords(info.text));
   }
 
-  // Run after the browser has finalized the selection (clicking inside an existing
-  // selection collapses it only after mouseup).
+  // Run after the browser and the site's editor have finalized the selection (clicking
+  // inside an existing selection collapses it only after mouseup).
+  let evaluateTimer = null;
   function scheduleEvaluate() {
-    setTimeout(evaluateSelection, 10);
+    clearTimeout(evaluateTimer);
+    evaluateTimer = setTimeout(evaluateSelection, 50);
   }
 
-  document.addEventListener('mouseup', (e) => {
+  // Listen for both: if a site calls preventDefault() on pointerdown, the browser never
+  // fires mouseup, but pointerup still arrives.
+  function onPointerUp(e) {
     if (isInsidePill(e)) return;
     scheduleEvaluate();
-  }, true);
+  }
+  window.addEventListener('mouseup', onPointerUp, true);
+  window.addEventListener('pointerup', onPointerUp, true);
 
   // Keyboard selections (Shift+arrows, Ctrl/Cmd+A) count as new selections too.
   document.addEventListener('keyup', (e) => {
@@ -370,7 +468,7 @@
     }
   }, true);
 
-  document.addEventListener('mousedown', (e) => {
+  window.addEventListener('pointerdown', (e) => {
     if (!pillHost || isInsidePill(e) || loading) return;
     removePill();
   }, true);
