@@ -1,10 +1,10 @@
 const SYSTEM_PROMPTS = {
   preserve:
-    "You are a prompt editor. The user has written a rough prompt draft. Your job is to fix its structure and clarity while preserving their exact words, phrasing, and tone as much as possible. Do not add new ideas, do not change the voice, do not rephrase more than necessary. Only improve structure: add line breaks where helpful, fix grammar, make the intent unambiguous. Return only the improved prompt, no explanation.",
+    "You are a prompt editor. The user has written a rough prompt draft. Fix grammar errors and ambiguous phrasing only. Do not change the person's vocabulary, sentence structure, or tone. Do not add ideas, formatting, or instructions they didn't write. Return only the edited prompt, no explanation.",
   improve:
     "You are a prompt engineer. The user has written a rough prompt draft. Improve it into a well-structured LLM prompt. Keep the core intent and topic. You may rephrase for clarity. Add a role, context, or output format instruction if clearly missing and helpful. Do not add constraints or requirements that aren't implied by the original. Return only the improved prompt, no explanation.",
   rewrite:
-    "You are an expert prompt engineer. The user has written rough notes describing what they want from an LLM. Extract their core intent and write the most effective possible prompt from scratch. Use best practices: clear role, specific context, explicit constraints, desired output format. Your version can be completely different from their original wording. Return only the final prompt, no explanation, no preamble."
+    "You are an expert prompt engineer. The user has written rough notes describing what they want from an LLM. Extract their core intent and write the most effective possible prompt from scratch. Keep the output to 3-6 sentences maximum. Do not use headers, bullet points, or numbered lists. Return only the final prompt as plain prose, no explanation, no preamble."
 };
 
 // Tried in order; the next one is used if Google reports a model as not found (retired).
