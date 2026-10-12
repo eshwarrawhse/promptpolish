@@ -1,10 +1,17 @@
 const SYSTEM_PROMPTS = {
-  preserve:
-    "You are a prompt editor. The user has written a rough prompt draft. Your job is to fix its structure and clarity while preserving their exact words, phrasing, and tone as much as possible. Do not add new ideas, do not change the voice, do not rephrase more than necessary. Only improve structure: add line breaks where helpful, fix grammar, make the intent unambiguous. Return only the improved prompt, no explanation.",
+  touchup:
+    "You are a prompt editor. The user has written a rough prompt draft. Fix grammar errors and ambiguous phrasing only. Do not change the person's vocabulary, sentence structure, or tone. Do not add ideas, formatting, or instructions they didn't write. Return only the edited prompt, no explanation.",
   improve:
     "You are a prompt engineer. The user has written a rough prompt draft. Improve it into a well-structured LLM prompt. Keep the core intent and topic. You may rephrase for clarity. Add a role, context, or output format instruction if clearly missing and helpful. Do not add constraints or requirements that aren't implied by the original. Return only the improved prompt, no explanation.",
   rewrite:
-    "You are an expert prompt engineer. The user has written rough notes describing what they want from an LLM. Extract their core intent and write the most effective possible prompt from scratch. Use best practices: clear role, specific context, explicit constraints, desired output format. Your version can be completely different from their original wording. Return only the final prompt, no explanation, no preamble."
+    "You are an expert prompt engineer. The user has written rough notes describing what they want from an LLM. Extract their core intent and write the most effective possible prompt from scratch. Keep the output to 3-6 sentences maximum. Do not use headers, bullet points, or numbered lists. Return only the final prompt as plain prose, no explanation, no preamble.",
+  // Loaded from storage at call time so edits in the popup apply immediately.
+  custom: async () => {
+    const { custom_prompt } = await chrome.storage.local.get('custom_prompt');
+    const instruction = (custom_prompt || '').trim();
+    if (!instruction) return null;
+    return `The user will give you a piece of text. Transform it according to this instruction: ${instruction}\n\nReturn only the result, no explanation, no preamble.`;
+  }
 };
 
 // Tried in order; the next one is used if Google reports a model as not found (retired).
@@ -36,8 +43,10 @@ async function rewrite(text, mode) {
     return { error: 'No API key set. Click the extension icon to add your Gemini key.' };
   }
 
-  const systemPrompt = SYSTEM_PROMPTS[mode];
-  if (!systemPrompt) return { error: `Unknown mode: ${mode}` };
+  const entry = SYSTEM_PROMPTS[mode];
+  if (!entry) return { error: `Unknown mode: ${mode}` };
+  const systemPrompt = typeof entry === 'function' ? await entry() : entry;
+  if (!systemPrompt) return { error: 'No custom prompt set' };
 
   try {
     let res;
@@ -58,7 +67,7 @@ async function rewrite(text, mode) {
       .join('')
       .trim();
     if (!result) return { error: 'Empty response from Gemini.' };
-    return { result };
+    return { result, tokens: data?.usageMetadata?.candidatesTokenCount };
   } catch (err) {
     return { error: `Network error: ${err.message}` };
   }
