@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "PromptPolish",
+  "version": "1.0.0",
+  "description": "Select a rough prompt draft on ChatGPT or Claude and rewrite it into a well-structured LLM prompt.",
+  "permissions": ["activeTab", "storage", "scripting"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://claude.ai/*",
+    "https://api.openai.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*", "https://claude.ai/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PromptPolish",
+    "default_icon": { "128": "icon.png" }
+  },
+  "icons": { "128": "icon.png" }
+}
