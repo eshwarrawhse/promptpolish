@@ -15,8 +15,8 @@ chrome.storage.local.get('openai_key', ({ openai_key }) => {
 
 function save() {
   const key = input.value.trim();
-  if (!key.startsWith('sk-')) {
-    showStatus('Key must start with "sk-"', false);
+  if (!key) {
+    showStatus('Please enter an API key', false);
     return;
   }
   chrome.storage.local.set({ openai_key: key }, () => {
