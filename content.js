@@ -107,9 +107,14 @@
       background: #1a1a1a;
       border-radius: 999px;
       padding: 6px 10px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(255, 255, 255, 0.06);
       font-family: system-ui, -apple-system, sans-serif;
       user-select: none;
+      animation: pp-fade-in 150ms ease-out;
+    }
+    @keyframes pp-fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
     }
     button {
       background: none;
@@ -121,11 +126,24 @@
       cursor: pointer;
       padding: 4px 8px;
       line-height: 1.2;
+      transition: background 120ms ease;
     }
     button:last-child { border-right: none; }
     button:hover { background: #333; }
     button:disabled { cursor: default; opacity: 0.7; }
     button:disabled:hover { background: none; }
+    button.loading { display: inline-flex; align-items: center; justify-content: center; opacity: 1; }
+    .spinner {
+      width: 10px;
+      height: 10px;
+      border: 1.5px solid #555;
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: pp-spin 600ms linear infinite;
+    }
+    @keyframes pp-spin {
+      to { transform: rotate(360deg); }
+    }
     .error {
       color: #ef4444;
       font-size: 11px;
@@ -198,7 +216,14 @@
     loading = true;
     pillRoot.querySelectorAll('button').forEach((b) => {
       b.disabled = true;
-      if (b === activeBtn) b.textContent = '...';
+      if (b !== activeBtn) return;
+      // Lock the width so the pill doesn't shrink when the label is swapped for the spinner.
+      b.style.width = `${b.offsetWidth}px`;
+      b.classList.add('loading');
+      b.textContent = '';
+      const spinner = document.createElement('span');
+      spinner.className = 'spinner';
+      b.appendChild(spinner);
     });
   }
 
@@ -237,9 +262,28 @@
         const ok = replaceSelection(job, res.result);
         if (!ok) return showError('Could not replace text — the input changed.');
         removePill();
+        flashSuccess(job.el);
         target = null;
       })
       .catch((err) => showError(err?.message || 'Something went wrong.'));
+  }
+
+  // Briefly outline the input in green so the user sees the replacement happened.
+  function flashSuccess(el) {
+    const prev = {
+      outline: el.style.getPropertyValue('outline'),
+      outlinePriority: el.style.getPropertyPriority('outline'),
+      offset: el.style.getPropertyValue('outline-offset'),
+      transition: el.style.getPropertyValue('transition')
+    };
+    el.style.setProperty('transition', 'outline-color 150ms ease');
+    el.style.setProperty('outline', '2px solid #22c55e', 'important');
+    el.style.setProperty('outline-offset', '2px');
+    setTimeout(() => {
+      el.style.setProperty('outline', prev.outline, prev.outlinePriority);
+      el.style.setProperty('outline-offset', prev.offset);
+      el.style.setProperty('transition', prev.transition);
+    }, 200);
   }
 
   function replaceSelection(job, newText) {
