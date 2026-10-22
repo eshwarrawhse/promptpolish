@@ -1,29 +1,68 @@
 (() => {
   const MIN_LENGTH = 10;
-  const MAX_WORDS = 500;
+  // Selections longer than this ask for confirmation before calling the API.
+  const LONG_TEXT_WORD_LIMIT = 500;
   const MODES = [
     { id: 'touchup', label: 'touch up' },
     { id: 'improve', label: 'improve' },
     { id: 'rewrite', label: 'rewrite' }
   ];
   const CUSTOM_MODE = { id: 'custom', label: 'custom' };
+  const LONG_TEXT_WARN_MODES = ['touchup', 'improve', 'rewrite', 'custom'];
   const UNDO_WINDOW_MS = 5000;
 
   let pillHost = null;   // element in the page that hosts the pill's shadow root
   let pillRoot = null;   // shadow root (isolates pill styles from the site's CSS)
-  let target = null;     // { type: 'textarea' | 'contenteditable', el, start, end, range, text }
+  let target = null;     // { type: 'field' | 'contenteditable', el, start, end, range, selRoot, text, rect }
   let loading = false;
   let dismissTimer = null;
   let customPrompt = '';   // mirrors chrome.storage.local.custom_prompt
   let lastRewrite = null;  // { element, type, originalValue, selectionStart, selectionEnd }
   let undoTimer = null;
 
+  // ---------- Site gating ----------
+
+  // On www.google.com only Google AI Mode counts; the normal search box is left alone.
+  // AI Mode is a search results page with udm=50 (unofficial, may change). The URL is
+  // checked at event time because Google switches modes without a full page load.
+  function isActiveOnThisPage() {
+    if (location.hostname !== 'www.google.com') return true;
+    return new URLSearchParams(location.search).get('udm') === '50';
+  }
+
   // ---------- Selection detection ----------
+
+  const TEXT_INPUT_TYPES = ['text', 'search', 'url', 'email', 'tel', ''];
+
+  // <textarea> and single-line text <input>s expose selection via selectionStart/End.
+  function isTextField(el) {
+    if (!el) return false;
+    if (el.tagName === 'TEXTAREA') return true;
+    return el.tagName === 'INPUT' && TEXT_INPUT_TYPES.includes((el.getAttribute('type') || '').toLowerCase());
+  }
+
+  // document.activeElement stops at shadow hosts; follow open shadow roots down to the
+  // element that actually has focus (custom-element inputs).
+  function getDeepActiveElement() {
+    let el = document.activeElement;
+    while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+    return el;
+  }
+
+  // Chrome scopes the selection inside shadow trees to the shadow root.
+  function getSelectionFor(node) {
+    const root = node && node.getRootNode ? node.getRootNode() : document;
+    return (root !== document && typeof root.getSelection === 'function')
+      ? root.getSelection()
+      : window.getSelection();
+  }
 
   function isEditable(el) {
     if (el.isContentEditable) return true;
     const attr = el.getAttribute('contenteditable');
-    return attr !== null && attr !== 'false';
+    if (attr !== null && attr !== 'false') return true;
+    // Custom editors sometimes mark the box with an ARIA role instead.
+    return el.getAttribute('role') === 'textbox' && el.getAttribute('aria-readonly') !== 'true';
   }
 
   // Walk up the whole ancestor chain (Claude/ChatGPT nest the text many levels deep inside
@@ -32,7 +71,7 @@
     let el = node && (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement);
     let host = null;
     while (el) {
-      if (el.tagName === 'TEXTAREA') return el;
+      if (isTextField(el)) return el;
       if (isEditable(el)) host = el;
       else if (host) break;
       el = el.parentElement;
@@ -42,15 +81,15 @@
 
   // Returns a description of the current selection if it's inside an editable prompt input.
   function readSelection() {
-    // Textareas don't expose their selection through window.getSelection() ranges,
-    // so check the focused element first.
-    const active = document.activeElement;
-    if (active && active.tagName === 'TEXTAREA' && active.selectionStart !== active.selectionEnd) {
+    // Text fields don't expose their selection through getSelection() ranges, so check
+    // the focused element first.
+    const active = getDeepActiveElement();
+    if (isTextField(active) && active.selectionStart !== active.selectionEnd) {
       const start = active.selectionStart;
       const end = active.selectionEnd;
       const text = active.value.slice(start, end);
       return {
-        type: 'textarea',
+        type: 'field',
         el: active,
         start,
         end,
@@ -59,10 +98,10 @@
       };
     }
 
-    const sel = window.getSelection();
+    const sel = getSelectionFor(active);
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
     const host = getEditingHost(sel.anchorNode);
-    if (!host || host.tagName === 'TEXTAREA' || !host.contains(sel.focusNode)) return null;
+    if (!host || isTextField(host) || !host.contains(sel.focusNode)) return null;
 
     const range = sel.getRangeAt(0);
     let rect = range.getBoundingClientRect();
@@ -71,12 +110,13 @@
       type: 'contenteditable',
       el: host,
       range: range.cloneRange(),
+      selRoot: host.getRootNode(),
       text: sel.toString(),
       rect
     };
   }
 
-  // Approximate the on-screen rect of a textarea selection using a mirror div.
+  // Approximate the on-screen rect of a text-field selection using a mirror div.
   function getTextareaSelectionRect(ta, start, end) {
     const taRect = ta.getBoundingClientRect();
     const style = getComputedStyle(ta);
@@ -93,7 +133,8 @@
       top: `${taRect.top}px`,
       left: `${taRect.left}px`,
       visibility: 'hidden',
-      whiteSpace: 'pre-wrap',
+      // <input> is single-line; <textarea> wraps.
+      whiteSpace: ta.tagName === 'INPUT' ? 'pre' : 'pre-wrap',
       wordWrap: 'break-word',
       overflow: 'hidden',
       borderStyle: 'solid'
@@ -223,21 +264,32 @@
       padding: 2px 6px;
       white-space: nowrap;
     }
-    .pill.tall {
+
+    /* Long-selection confirmation: dark card, orange accent. */
+    .confirm {
+      display: flex;
       flex-direction: column;
+      gap: 8px;
+      max-width: 280px;
+      padding: 10px 12px;
+      background: #1a1a1a;
+      color: #eee;
+      border: 1px solid #FF8C00;
       border-radius: 14px;
-      padding: 8px 14px;
-      gap: 4px;
+      box-shadow: 0 2px 12px rgba(255, 140, 0, 0.25);
+      font-size: 12px;
+      line-height: 1.4;
     }
-    .notice { font-size: 11px; }
-    .link {
-      font-size: 11px;
-      font-weight: 600;
-      text-decoration: underline;
-      cursor: pointer;
-      color: #000;
+    .confirm .actions { display: flex; justify-content: flex-end; gap: 6px; }
+    .confirm button {
+      border: 1px solid #444;
+      border-radius: 999px;
+      padding: 4px 12px;
     }
-    .link:hover { color: #3a1f00; }
+    .confirm .yes { background: #FF8C00; border-color: #FF8C00; color: #000; font-weight: 600; }
+    .confirm .yes:hover { background: #E07B00; border-color: #E07B00; }
+    .confirm .no { background: transparent; color: #aaa; }
+    .confirm .no:hover { color: #fff; border-color: #777; }
   `;
 
   // ---------- Font + custom prompt ----------
@@ -271,7 +323,7 @@
     return text.trim().split(/\s+/).filter(Boolean).length;
   }
 
-  function showPill(rect, wordCount) {
+  function showPill(rect, anchorEl) {
     removePill();
 
     pillHost = document.createElement('div');
@@ -279,8 +331,18 @@
       position: 'fixed',
       zIndex: '2147483647',
       top: '0px',
-      left: '0px'
+      left: '0px',
+      inset: 'auto',
+      margin: '0',
+      padding: '0',
+      border: '0',
+      background: 'transparent',
+      overflow: 'visible'
     });
+    // A manual popover renders in the browser's top layer, so no site stacking context,
+    // overflow:hidden container or z-index can cover or clip the pill.
+    const usePopover = typeof pillHost.showPopover === 'function';
+    if (usePopover) pillHost.popover = 'manual';
     pillRoot = pillHost.attachShadow({ mode: 'open' });
 
     loadFont();
@@ -289,10 +351,14 @@
     const wrap = document.createElement('div');
     wrap.className = 'wrap';
     pillRoot.append(style, wrap);
-    (document.body || document.documentElement).appendChild(pillHost);
+    // Inside an open <dialog>, attach there; content outside a modal dialog is inert.
+    const dialog = anchorEl && anchorEl.closest && anchorEl.closest('dialog[open]');
+    (dialog || document.body || document.documentElement).appendChild(pillHost);
+    if (usePopover) {
+      try { pillHost.showPopover(); } catch (_) { /* not supported here; stays fixed-position */ }
+    }
 
-    if (wordCount > MAX_WORDS) renderLongTextWarning(wrap, rect);
-    else renderButtons(wrap);
+    renderButtons(wrap);
     positionPill(rect);
   }
 
@@ -344,25 +410,47 @@
     btn.title = off ? 'set a custom prompt in the extension settings' : customPrompt;
   }
 
-  function renderLongTextWarning(wrap, rect) {
+  // Shown in place of the buttons when a long selection is sent to a warned mode.
+  // Nothing is sent to the API until "continue" is clicked.
+  function renderLongTextConfirm(mode) {
+    const wrap = pillRoot.querySelector('.wrap');
     wrap.textContent = '';
-    const pill = document.createElement('div');
-    pill.className = 'pill tall';
-    wrap.appendChild(pill);
-    const notice = document.createElement('span');
-    notice.className = 'notice';
-    notice.textContent = `best for short prompts (${MAX_WORDS} words max)`;
-    const link = document.createElement('span');
-    link.className = 'link';
-    link.textContent = 'rewrite anyway';
-    link.addEventListener('mousedown', (e) => e.preventDefault());
-    link.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      renderButtons(wrap);
-      positionPill(rect);
+    const label = [...MODES, CUSTOM_MODE].find((m) => m.id === mode)?.label || mode;
+
+    const card = document.createElement('div');
+    card.className = 'confirm';
+    const msg = document.createElement('span');
+    msg.textContent = `this is long — ${label} works best under ${LONG_TEXT_WORD_LIMIT} words. continue?`;
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+
+    const makeAction = (cls, text, onClick) => {
+      const btn = document.createElement('button');
+      btn.className = cls;
+      btn.textContent = text;
+      btn.addEventListener('mousedown', (e) => e.preventDefault());
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick();
+      });
+      return btn;
+    };
+    const cancel = makeAction('no', 'cancel', () => {
+      removePill();
+      target = null;
     });
-    pill.append(notice, link);
+    const confirm = makeAction('yes', 'continue', () => {
+      renderButtons(wrap);
+      reposition();
+      const btn = pillRoot.querySelector(`button[data-mode="${mode}"]`);
+      handleModeClick(mode, btn, { confirmed: true });
+    });
+
+    actions.append(cancel, confirm);
+    card.append(msg, actions);
+    wrap.appendChild(card);
+    reposition();
   }
 
   function positionPill(rect) {
@@ -433,8 +521,12 @@
 
   // ---------- Rewrite flow ----------
 
-  function handleModeClick(mode, btn) {
+  function handleModeClick(mode, btn, { confirmed = false } = {}) {
     if (loading || !target) return;
+    if (!confirmed && LONG_TEXT_WARN_MODES.includes(mode) && countWords(target.text) > LONG_TEXT_WORD_LIMIT) {
+      renderLongTextConfirm(mode);
+      return;
+    }
     const job = target;
     setLoading(btn);
 
@@ -478,16 +570,61 @@
     }, 200);
   }
 
+  // Some sites (Google AI Mode) re-render their input while the API call is in flight.
+  // If the element we captured is gone, find the live input that still holds the text.
+  function findLiveInput(job) {
+    if (job.el.isConnected) return job.el;
+    const holdsText = (el) => (isTextField(el) ? el.value : el.innerText || '').includes(job.text);
+    const active = getDeepActiveElement();
+    const activeHost = active && (isTextField(active) ? active : getEditingHost(active));
+    if (activeHost && holdsText(activeHost)) return activeHost;
+    const label = job.el.getAttribute('aria-label');
+    const selector = label
+      ? `${job.el.tagName.toLowerCase()}[aria-label="${CSS.escape(label)}"]`
+      : job.el.tagName.toLowerCase();
+    return [...document.querySelectorAll(selector)].find(holdsText) || null;
+  }
+
+  // Build a range covering `text` inside `host` (used when the saved range went stale).
+  function findTextRange(host, text) {
+    const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    let full = '';
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      nodes.push({ node: n, start: full.length });
+      full += n.data;
+    }
+    const idx = full.indexOf(text);
+    if (idx === -1) return null;
+    const locate = (offset) => {
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        if (nodes[i].start <= offset) return { node: nodes[i].node, offset: offset - nodes[i].start };
+      }
+      return null;
+    };
+    const a = locate(idx);
+    const b = locate(idx + text.length);
+    if (!a || !b) return null;
+    const range = document.createRange();
+    range.setStart(a.node, a.offset);
+    range.setEnd(b.node, b.offset);
+    return range;
+  }
+
   function replaceSelection(job, newText) {
-    if (!job.el.isConnected) return false;
+    const el = findLiveInput(job);
+    if (!el) return false;
+    if (el !== job.el) {
+      job = { ...job, el, range: null, selRoot: el.getRootNode() };
+    }
     const snapshot = {
       element: job.el,
       type: job.type,
-      originalValue: job.type === 'textarea' ? job.el.value : job.el.innerText,
-      selectionStart: job.type === 'textarea' ? job.start : null,
-      selectionEnd: job.type === 'textarea' ? job.end : null
+      originalValue: job.type === 'field' ? job.el.value : job.el.innerText,
+      selectionStart: job.type === 'field' ? job.start : null,
+      selectionEnd: job.type === 'field' ? job.end : null
     };
-    const ok = job.type === 'textarea'
+    const ok = job.type === 'field'
       ? replaceInTextarea(job, newText)
       : replaceInContentEditable(job, newText);
     if (ok) armUndo(snapshot);
@@ -526,16 +663,13 @@
   function restoreOriginal(snap) {
     const el = snap.element;
     el.focus();
-    if (snap.type === 'textarea') {
+    if (snap.type === 'field') {
       el.select();
       let ok = false;
       try {
         ok = document.execCommand('insertText', false, snap.originalValue) && el.value === snap.originalValue;
       } catch (_) { ok = false; }
-      if (!ok) {
-        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
-        setter.call(el, snap.originalValue);
-      }
+      if (!ok) setNativeValue(el, snap.originalValue);
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.setSelectionRange(snap.selectionStart, snap.selectionEnd);
       return;
@@ -543,7 +677,7 @@
 
     const range = document.createRange();
     range.selectNodeContents(el);
-    const sel = window.getSelection();
+    const sel = getSelectionFor(el);
     sel.removeAllRanges();
     sel.addRange(range);
     let ok = false;
@@ -555,6 +689,13 @@
     }
   }
 
+  // Assign through the prototype's setter so React-style value trackers see the change.
+  function setNativeValue(el, value) {
+    const proto = el.tagName === 'INPUT' ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
+  }
+
+  // Handles <textarea> and text <input>.
   function replaceInTextarea(job, newText) {
     const ta = job.el;
     let { start, end } = job;
@@ -580,9 +721,7 @@
 
     if (!inserted) {
       console.warn('[polishd] execCommand unavailable; replacing value directly (Ctrl+Z will not undo this).');
-      // Use the native setter so React's value tracker notices the change.
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
-      setter.call(ta, expected);
+      setNativeValue(ta, expected);
       const caret = start + newText.length;
       ta.setSelectionRange(caret, caret);
     }
@@ -592,20 +731,39 @@
 
   function replaceInContentEditable(job, newText) {
     const el = job.el;
+    // The saved range is stale if the editor re-rendered its nodes; re-find the text.
+    let range = job.range;
+    const rangeLive = range && range.startContainer.isConnected && el.contains(range.startContainer)
+      && range.toString() === job.text;
+    if (!rangeLive) range = findTextRange(el, job.text);
+    if (!range) return false;
+
     el.focus();
-    const sel = window.getSelection();
+    const sel = getSelectionFor(el);
     sel.removeAllRanges();
-    sel.addRange(job.range);
+    sel.addRange(range);
 
-    if (document.execCommand('insertText', false, newText)) return true;
+    // execCommand fires real (trusted) beforeinput/input events, which is what editors
+    // like ProseMirror and Google's input handlers listen to.
+    let ok = false;
+    try { ok = document.execCommand('insertText', false, newText); } catch (_) { ok = false; }
+    if (ok) return true;
 
-    // Fallback: plain DOM replacement + input event.
+    // Fallback: announce the edit with beforeinput (an editor may apply it itself and
+    // cancel the event), otherwise mutate the DOM and follow up with input.
     console.warn('[polishd] execCommand unavailable; replacing text directly (Ctrl+Z will not undo this).');
-    const range = sel.getRangeAt(0);
-    range.deleteContents();
-    range.insertNode(document.createTextNode(newText));
-    range.collapse(false);
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: newText }));
+    const handled = !el.dispatchEvent(new InputEvent('beforeinput', {
+      bubbles: true, cancelable: true, composed: true, inputType: 'insertReplacementText', data: newText
+    }));
+    if (!handled) {
+      const r = sel.getRangeAt(0);
+      r.deleteContents();
+      r.insertNode(document.createTextNode(newText));
+      r.collapse(false);
+    }
+    el.dispatchEvent(new InputEvent('input', {
+      bubbles: true, composed: true, inputType: 'insertReplacementText', data: newText
+    }));
     return true;
   }
 
@@ -617,6 +775,11 @@
 
   function evaluateSelection() {
     if (loading) return;
+    if (!isActiveOnThisPage()) {
+      removePill();
+      target = null;
+      return;
+    }
     const info = readSelection();
     if (!info || info.text.trim().length <= MIN_LENGTH) {
       removePill();
@@ -624,7 +787,7 @@
       return;
     }
     target = info;
-    showPill(info.rect, countWords(info.text));
+    showPill(info.rect, info.el);
   }
 
   // Run after the browser and the site's editor have finalized the selection (clicking
@@ -666,7 +829,7 @@
   // Keep the fixed-position pill anchored to the selection when the page or input scrolls.
   function reposition() {
     if (!pillHost || !target || !target.el.isConnected) return;
-    const rect = target.type === 'textarea'
+    const rect = target.type === 'field'
       ? getTextareaSelectionRect(target.el, target.start, target.end)
       : target.range.getBoundingClientRect();
     positionPill(rect);

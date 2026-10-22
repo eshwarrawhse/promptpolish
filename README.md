@@ -1,6 +1,6 @@
 # Polishd
 
-Chrome extension (Manifest V3) that rewrites rough prompt drafts on ChatGPT, Claude, Gemini, Perplexity and Notion.
+Chrome extension (Manifest V3) that rewrites rough prompt drafts on ChatGPT, Claude, Gemini, Perplexity, Notion and Google AI Mode.
 Select text in the prompt box → pick **Touch up**, **Improve** or **Rewrite** → the selection is replaced with the rewritten prompt (via Google Gemini `gemini-2.0-flash`, falling back to `gemini-2.5-flash`).
 
 ## Install (unpacked)
