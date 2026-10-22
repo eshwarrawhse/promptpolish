@@ -570,11 +570,15 @@
     }, 200);
   }
 
+  // Selection text, innerText and raw text nodes disagree on line breaks between
+  // paragraphs, so text is compared with all whitespace removed.
+  const squash = (str) => str.replace(/\s+/g, '');
+
   // Some sites (Google AI Mode) re-render their input while the API call is in flight.
   // If the element we captured is gone, find the live input that still holds the text.
   function findLiveInput(job) {
     if (job.el.isConnected) return job.el;
-    const holdsText = (el) => (isTextField(el) ? el.value : el.innerText || '').includes(job.text);
+    const holdsText = (el) => squash(isTextField(el) ? el.value : el.innerText || '').includes(squash(job.text));
     const active = getDeepActiveElement();
     const activeHost = active && (isTextField(active) ? active : getEditingHost(active));
     if (activeHost && holdsText(activeHost)) return activeHost;
@@ -586,28 +590,27 @@
   }
 
   // Build a range covering `text` inside `host` (used when the saved range went stale).
+  // Matches on non-whitespace characters so paragraph breaks don't matter.
   function findTextRange(host, text) {
+    const needle = squash(text);
+    if (!needle) return null;
+    const chars = [];   // { node, offset } for every non-whitespace character, in order
+    let hay = '';
     const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
-    const nodes = [];
-    let full = '';
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-      nodes.push({ node: n, start: full.length });
-      full += n.data;
-    }
-    const idx = full.indexOf(text);
-    if (idx === -1) return null;
-    const locate = (offset) => {
-      for (let i = nodes.length - 1; i >= 0; i--) {
-        if (nodes[i].start <= offset) return { node: nodes[i].node, offset: offset - nodes[i].start };
+      for (let i = 0; i < n.data.length; i++) {
+        if (/\s/.test(n.data[i])) continue;
+        chars.push({ node: n, offset: i });
+        hay += n.data[i];
       }
-      return null;
-    };
-    const a = locate(idx);
-    const b = locate(idx + text.length);
-    if (!a || !b) return null;
+    }
+    const idx = hay.indexOf(needle);
+    if (idx === -1) return null;
+    const first = chars[idx];
+    const last = chars[idx + needle.length - 1];
     const range = document.createRange();
-    range.setStart(a.node, a.offset);
-    range.setEnd(b.node, b.offset);
+    range.setStart(first.node, first.offset);
+    range.setEnd(last.node, last.offset + 1);
     return range;
   }
 
@@ -733,8 +736,10 @@
     const el = job.el;
     // The saved range is stale if the editor re-rendered its nodes; re-find the text.
     let range = job.range;
-    const rangeLive = range && range.startContainer.isConnected && el.contains(range.startContainer)
-      && range.toString() === job.text;
+    const rangeLive = range && !range.collapsed
+      && range.startContainer.isConnected && range.endContainer.isConnected
+      && el.contains(range.startContainer) && el.contains(range.endContainer)
+      && squash(range.toString()) === squash(job.text);
     if (!rangeLive) range = findTextRange(el, job.text);
     if (!range) return false;
 
