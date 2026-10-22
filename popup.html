@@ -3,10 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <title>polishd</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet" />
   <style>
+    /* Bundled with the extension (fonts/, OFL) so the popup never depends on a CDN. */
+    @font-face {
+      font-family: 'Space Grotesk';
+      src: url('fonts/SpaceGrotesk-latin.woff2') format('woff2');
+      font-weight: 300 700;
+      font-style: normal;
+      font-display: swap;
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
