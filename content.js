@@ -515,10 +515,12 @@
     showMessage('error', message, 3000);
   }
 
-  function showDone(tokens, mode) {
+  // styleExamples > 0 means the style memory was used for this rewrite.
+  function showDone(tokens, mode, styleExamples = 0) {
     const label = modeLabel(mode);
     const count = Number.isFinite(tokens) ? `${tokens} tokens` : 'done';
-    showMessage('done', `⚡ ${count} · ${label}`, 1500);
+    const style = styleExamples > 0 ? ' · in your style' : '';
+    showMessage('done', `⚡ ${count} · ${label}${style}`, styleExamples > 0 ? 2000 : 1500);
   }
 
   // ---------- Rewrite flow ----------
@@ -544,13 +546,13 @@
   function runRewrite(job, mode, btn, fallbackText = null) {
     setLoading(btn);
 
-    const finish = (text, tokens, fromFallback) => {
+    const finish = (text, tokens, fromFallback, styleExamples = 0) => {
       const ok = replaceSelection(job, text, mode);
       if (!ok) return showError('could not replace text — the input changed.');
       target = null;
       flashSuccess(job.el);
       if (fromFallback) showMessage('done', '⚡ split locally · gemini unavailable', 2000);
-      else showDone(tokens, mode);
+      else showDone(tokens, mode, styleExamples);
     };
     const fail = (message) => (fallbackText ? finish(fallbackText, null, true) : showError(message));
 
@@ -567,7 +569,7 @@
         if (!pillHost) return; // dismissed meanwhile
         if (!res) return fail('no response from polishd.');
         if (res.error) return fail(res.error);
-        finish(res.result, res.tokens, false);
+        finish(res.result, res.tokens, false, res.styleExamples);
       })
       .catch((err) => fail(err?.message || 'something went wrong.'));
   }

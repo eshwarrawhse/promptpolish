@@ -114,7 +114,8 @@ async function rewrite(text, mode) {
 
   const basePrompt = MODE_PROMPTS[mode];
   if (!basePrompt) return { error: `Unknown mode: ${mode}` };
-  const systemPrompt = basePrompt + await StyleProfile.buildAnchor(mode);
+  const anchor = await StyleProfile.buildAnchor(mode);
+  const systemPrompt = basePrompt + anchor.text;
 
   try {
     let res;
@@ -136,7 +137,7 @@ async function rewrite(text, mode) {
       .trim();
     const result = cleanOutput(raw);
     if (!result) return { error: 'Empty response from Gemini.' };
-    return { result, tokens: data?.usageMetadata?.candidatesTokenCount };
+    return { result, tokens: data?.usageMetadata?.candidatesTokenCount, styleExamples: anchor.count };
   } catch (err) {
     return { error: `Network error: ${err.message}` };
   }

@@ -14,6 +14,16 @@ const STYLE_PROFILE_CONFIG = {
   MODES: ['improve', 'tighten'],
   // Accepted rewrites kept per mode; older ones drop off.
   BUFFER_SIZE: 5,
+  // Which buffers each mode reads when writing. improve also learns from tighten so it
+  // has your style even if you mostly tighten; tighten stays on its own (terser) examples.
+  ANCHOR_SOURCES: { improve: ['improve', 'tighten'], tighten: ['tighten'] },
+  // What each mode should take from the examples.
+  ANCHOR_GUIDANCE: {
+    improve: 'Before writing, study these and match them: overall length, casing, how much ' +
+      'detail they give, whether they use numbered steps, and how they phrase guardrails and ' +
+      '"read the code first" instructions.',
+    tighten: 'Match their terseness, casing and phrasing.'
+  },
   // Long accepted prompts are clipped before storing so the anchor stays small.
   MAX_ENTRY_CHARS: 1200,
   STORAGE_KEY: 'style_profile',          // { improve: [entry], tighten: [entry] }
@@ -60,15 +70,27 @@ const StyleProfile = (() => {
     await store.remove(C.STORAGE_KEY);
   }
 
-  // Text appended to the system prompt, or '' when there is nothing to anchor on.
+  // Newest-first examples for `mode`, drawn from its ANCHOR_SOURCES buffers.
+  async function examplesFor(mode) {
+    const profile = await load();
+    const sources = C.ANCHOR_SOURCES[mode] || [mode];
+    return sources
+      .flatMap((m) => profile[m] || [])
+      .sort((a, b) => (b.at || 0) - (a.at || 0))
+      .slice(0, C.BUFFER_SIZE);
+  }
+
+  // { text, count }: text is appended to the system prompt ('' when there is nothing
+  // to anchor on); count is how many examples went in.
   async function buildAnchor(mode) {
-    if (!C.MODES.includes(mode) || !(await isEnabled())) return '';
-    const entries = (await load())[mode] || [];
-    if (!entries.length) return '';
+    if (!C.MODES.includes(mode) || !(await isEnabled())) return { text: '', count: 0 };
+    const entries = await examplesFor(mode);
+    if (!entries.length) return { text: '', count: 0 };
     const examples = entries.map((e) => e.text).join('\n---\n');
-    return '\n\nRecent prompts this developer accepted (style reference only). Match their ' +
-      'phrasing, length, casing and level of terseness. Do not copy their content, topics ' +
-      `or file names.\n---\n${examples}\n---`;
+    const text = '\n\nStyle memory: recent prompts this developer accepted, newest first. ' +
+      `${C.ANCHOR_GUIDANCE[mode] || ''} They show how to write, not what to write: do not copy ` +
+      `their content, topics or file names.\n---\n${examples}\n---`;
+    return { text, count: entries.length };
   }
 
   return { config: C, isEnabled, setEnabled, record, count, clear, buildAnchor };
