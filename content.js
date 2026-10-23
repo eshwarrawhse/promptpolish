@@ -2,22 +2,37 @@
   const MIN_LENGTH = 10;
   // Selections longer than this ask for confirmation before calling the API.
   const LONG_TEXT_WORD_LIMIT = 500;
+  // Pill buttons. ids must match the MODE_PROMPTS keys in background.js.
   const MODES = [
     { id: 'touchup', label: 'touch up' },
     { id: 'improve', label: 'improve' },
-    { id: 'rewrite', label: 'rewrite' }
+    { id: 'tighten', label: 'tighten' },
+    { id: 'scopecheck', label: 'scope-check' }
   ];
-  const CUSTOM_MODE = { id: 'custom', label: 'custom' };
-  const LONG_TEXT_WARN_MODES = ['touchup', 'improve', 'rewrite', 'custom'];
+  const LONG_TEXT_WARN_MODES = ['touchup', 'improve', 'tighten'];
+  // Modes whose accepted results feed the style profile (styleProfile.js decides too).
+  const LEARNING_MODES = ['improve', 'tighten'];
   const UNDO_WINDOW_MS = 5000;
+
+  // scope-check: only flag clear multi-task dumps.
+  const SCOPE_CHECK_MIN_TASKS = 3;
+  // A clause counts as a task when it starts with one of these (after fillers are stripped).
+  const SCOPE_CHECK_VERBS = [
+    'add', 'fix', 'update', 'remove', 'delete', 'refactor', 'rename', 'move', 'create',
+    'implement', 'build', 'write', 'set up', 'setup', 'configure', 'install', 'upgrade',
+    'migrate', 'replace', 'change', 'convert', 'document', 'test', 'debug', 'investigate',
+    'optimize', 'optimise', 'clean up', 'cleanup', 'deploy', 'integrate', 'extract', 'merge',
+    'make', 'improve', 'standardize', 'standardise', 'review', 'check', 'bump', 'generate',
+    'drop', 'switch', 'port', 'translate', 'redesign', 'support', 'handle', 'enable', 'disable',
+    'expose', 'wire up', 'hook up', 'look into', 'resolve', 'split', 'speed up', 'run', 'publish'
+  ];
 
   let pillHost = null;   // element in the page that hosts the pill's shadow root
   let pillRoot = null;   // shadow root (isolates pill styles from the site's CSS)
   let target = null;     // { type: 'field' | 'contenteditable', el, start, end, range, selRoot, text, rect }
   let loading = false;
   let dismissTimer = null;
-  let customPrompt = '';   // mirrors chrome.storage.local.custom_prompt
-  let lastRewrite = null;  // { element, type, originalValue, selectionStart, selectionEnd }
+  let lastRewrite = null;  // { element, type, originalValue, selectionStart, selectionEnd, mode, newText }
   let undoTimer = null;
 
   // ---------- Site gating ----------
@@ -202,40 +217,6 @@
     .pill button:disabled:hover { background: none; }
     button.loading { display: inline-flex; align-items: center; justify-content: center; opacity: 1; }
 
-    /* Custom mode: outlined, sits next to the solid pill. */
-    .custom {
-      position: relative;
-      background: transparent;
-      border: 1px solid #FF8C00;
-      border-radius: 999px;
-      color: #FF8C00;
-      font-weight: 500;
-      padding: 9px 16px;
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
-      box-shadow: 0 2px 12px rgba(255, 140, 0, 0.25);
-      transition: background 120ms ease;
-    }
-    .custom:hover { background: rgba(255, 140, 0, 0.12); }
-    .custom.off {
-      border-color: #777;
-      color: #888;
-      box-shadow: none;
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
-    .custom.off:hover { background: transparent; }
-    .star {
-      position: absolute;
-      line-height: 1;
-      pointer-events: none;
-    }
-    /* Hand-placed, not a grid: two above, two below, offset and unevenly sized. */
-    .star.s1 { top: 1px; left: 8px; font-size: 0.5em; }
-    .star.s2 { top: -2px; left: 58%; font-size: 0.6em; }
-    .star.s3 { bottom: 1px; left: 30%; font-size: 0.5em; }
-    .star.s4 { bottom: 4px; right: 5px; font-size: 0.5em; }
-
     .spinner {
       width: 10px;
       height: 10px;
@@ -244,9 +225,9 @@
       border-radius: 50%;
       animation: pp-spin 600ms linear infinite;
     }
-    .custom .spinner {
-      border-color: rgba(255, 140, 0, 0.3);
-      border-top-color: #FF8C00;
+    .confirm .spinner {
+      border-color: rgba(0, 0, 0, 0.3);
+      border-top-color: #000;
     }
     @keyframes pp-spin {
       to { transform: rotate(360deg); }
@@ -290,9 +271,21 @@
     .confirm .yes:hover { background: #E07B00; border-color: #E07B00; }
     .confirm .no { background: transparent; color: #aaa; }
     .confirm .no:hover { color: #fff; border-color: #777; }
+
+    /* scope-check panel: same card, wider, with the detected tasks. */
+    .confirm.scope { max-width: 340px; }
+    .tasks {
+      margin: 0;
+      padding-left: 20px;
+      max-height: 160px;
+      overflow-y: auto;
+      color: #ccc;
+    }
+    .tasks li { margin: 2px 0; }
+    .tasks li::marker { color: #FF8C00; }
   `;
 
-  // ---------- Font + custom prompt ----------
+  // ---------- Font ----------
 
   // Load Space Grotesk from the extension package. Using the bytes directly (instead of a
   // Google Fonts URL) means the site's Content-Security-Policy can't block it.
@@ -307,17 +300,6 @@
       .catch(() => { /* falls back to system-ui */ });
   }
 
-  try {
-    chrome.storage.local.get('custom_prompt', ({ custom_prompt }) => {
-      customPrompt = (custom_prompt || '').trim();
-    });
-    chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === 'local' && changes.custom_prompt) {
-        customPrompt = (changes.custom_prompt.newValue || '').trim();
-        updateCustomButton();
-      }
-    });
-  } catch (_) { /* extension context gone */ }
 
   function countWords(text) {
     return text.trim().split(/\s+/).filter(Boolean).length;
@@ -371,7 +353,6 @@
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (btn.classList.contains('off')) return;
       handleModeClick(mode.id, btn);
     });
     return btn;
@@ -387,27 +368,25 @@
       pill.appendChild(btn);
     });
 
-    const custom = makeButton(CUSTOM_MODE, 'custom');
-    ['s1', 's2', 's3', 's4'].forEach((cls) => {
-      const star = document.createElement('span');
-      star.className = `star ${cls}`;
-      star.textContent = '✦';
-      custom.appendChild(star);
-    });
-    custom.appendChild(document.createTextNode(CUSTOM_MODE.label));
-
-    wrap.append(pill, custom);
-    updateCustomButton();
+    wrap.appendChild(pill);
   }
 
-  // Grey out the custom button (but keep its tooltip working) when no prompt is saved.
-  function updateCustomButton() {
-    const btn = pillRoot && pillRoot.querySelector('.custom');
-    if (!btn || btn.classList.contains('loading')) return;
-    const off = !customPrompt;
-    btn.classList.toggle('off', off);
-    btn.setAttribute('aria-disabled', String(off));
-    btn.title = off ? 'set a custom prompt in the extension settings' : customPrompt;
+  function modeLabel(mode) {
+    return MODES.find((m) => m.id === mode)?.label || mode;
+  }
+
+  // Small pill-style action button used inside the dark cards.
+  function makeActionButton(cls, text, onClick) {
+    const btn = document.createElement('button');
+    btn.className = cls;
+    btn.textContent = text;
+    btn.addEventListener('mousedown', (e) => e.preventDefault());
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onClick(btn);
+    });
+    return btn;
   }
 
   // Shown in place of the buttons when a long selection is sent to a warned mode.
@@ -415,32 +394,19 @@
   function renderLongTextConfirm(mode) {
     const wrap = pillRoot.querySelector('.wrap');
     wrap.textContent = '';
-    const label = [...MODES, CUSTOM_MODE].find((m) => m.id === mode)?.label || mode;
 
     const card = document.createElement('div');
     card.className = 'confirm';
     const msg = document.createElement('span');
-    msg.textContent = `this is long — ${label} works best under ${LONG_TEXT_WORD_LIMIT} words. continue?`;
+    msg.textContent = `this is long — ${modeLabel(mode)} works best under ${LONG_TEXT_WORD_LIMIT} words. continue?`;
     const actions = document.createElement('div');
     actions.className = 'actions';
 
-    const makeAction = (cls, text, onClick) => {
-      const btn = document.createElement('button');
-      btn.className = cls;
-      btn.textContent = text;
-      btn.addEventListener('mousedown', (e) => e.preventDefault());
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        onClick();
-      });
-      return btn;
-    };
-    const cancel = makeAction('no', 'cancel', () => {
+    const cancel = makeActionButton('no', 'cancel', () => {
       removePill();
       target = null;
     });
-    const confirm = makeAction('yes', 'continue', () => {
+    const confirm = makeActionButton('yes', 'continue', () => {
       renderButtons(wrap);
       reposition();
       const btn = pillRoot.querySelector(`button[data-mode="${mode}"]`);
@@ -449,6 +415,42 @@
 
     actions.append(cancel, confirm);
     card.append(msg, actions);
+    wrap.appendChild(card);
+    reposition();
+  }
+
+  // scope-check result: the detected tasks, with split / keep as is.
+  function renderScopePanel(tasks) {
+    const wrap = pillRoot.querySelector('.wrap');
+    wrap.textContent = '';
+    const job = target;
+
+    const card = document.createElement('div');
+    card.className = 'confirm scope';
+    const msg = document.createElement('span');
+    msg.textContent = `this looks like ${tasks.length} separate tasks — agents do better one at a time. split?`;
+    const list = document.createElement('ol');
+    list.className = 'tasks';
+    tasks.forEach((t) => {
+      const li = document.createElement('li');
+      li.textContent = t;
+      list.appendChild(li);
+    });
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+
+    const keep = makeActionButton('no', 'keep as is', () => {
+      removePill();
+      target = null;
+    });
+    const split = makeActionButton('yes', 'split', (btn) => {
+      // Gemini writes the clean breakdown; the locally detected list is the fallback.
+      const fallback = tasks.map((t, i) => `${i + 1}. ${t}`).join('\n');
+      runRewrite(job, 'scopecheck', btn, fallback);
+    });
+
+    actions.append(keep, split);
+    card.append(msg, list, actions);
     wrap.appendChild(card);
     reposition();
   }
@@ -514,7 +516,7 @@
   }
 
   function showDone(tokens, mode) {
-    const label = [...MODES, CUSTOM_MODE].find((m) => m.id === mode)?.label || mode;
+    const label = modeLabel(mode);
     const count = Number.isFinite(tokens) ? `${tokens} tokens` : 'done';
     showMessage('done', `⚡ ${count} · ${label}`, 1500);
   }
@@ -527,29 +529,100 @@
       renderLongTextConfirm(mode);
       return;
     }
-    const job = target;
+    if (mode === 'scopecheck') {
+      // Detection is local and instant; Gemini is only called if the user picks "split".
+      const tasks = detectTasks(target.text);
+      if (tasks.length >= SCOPE_CHECK_MIN_TASKS) renderScopePanel(tasks);
+      else showMessage('done', 'looks like one task — good to send', 2000);
+      return;
+    }
+    runRewrite(target, mode, btn);
+  }
+
+  // Send the text to Gemini for `mode` and replace the selection with the result.
+  // `fallbackText` (scope-check split) is used instead of an error if the call fails.
+  function runRewrite(job, mode, btn, fallbackText = null) {
     setLoading(btn);
+
+    const finish = (text, tokens, fromFallback) => {
+      const ok = replaceSelection(job, text, mode);
+      if (!ok) return showError('could not replace text — the input changed.');
+      target = null;
+      flashSuccess(job.el);
+      if (fromFallback) showMessage('done', '⚡ split locally · gemini unavailable', 2000);
+      else showDone(tokens, mode);
+    };
+    const fail = (message) => (fallbackText ? finish(fallbackText, null, true) : showError(message));
 
     let sent;
     try {
       sent = chrome.runtime.sendMessage({ action: 'rewrite', text: job.text, mode });
     } catch (err) {
-      showError('extension was reloaded — refresh this page.');
+      fail('extension was reloaded — refresh this page.');
       return;
     }
 
     sent
       .then((res) => {
         if (!pillHost) return; // dismissed meanwhile
-        if (!res) return showError('no response from polishd.');
-        if (res.error) return showError(res.error);
-        const ok = replaceSelection(job, res.result);
-        if (!ok) return showError('could not replace text — the input changed.');
-        target = null;
-        flashSuccess(job.el);
-        showDone(res.tokens, mode);
+        if (!res) return fail('no response from polishd.');
+        if (res.error) return fail(res.error);
+        finish(res.result, res.tokens, false);
       })
-      .catch((err) => showError(err?.message || 'something went wrong.'));
+      .catch((err) => fail(err?.message || 'something went wrong.'));
+  }
+
+  // ---------- scope-check detection (local, conservative) ----------
+
+  const LIST_ITEM = /^\s*(?:[-*•]|\d+[.)])\s+/;
+  const LEADING_FILLER = [
+    /^(?:and|also|then|plus|but|so|finally|lastly|next|after that|afterwards|oh|btw|maybe)\b[\s,]*/i,
+    /^(?:can|could|would|will) (?:you|u)\s+(?:please\s+|pls\s+)?/i,
+    /^(?:please|pls|plz)\s+/i,
+    /^(?:i (?:want|need|would like) (?:you|u) to|i'?d like (?:you|u) to|we (?:need|should|have) to|we should|let'?s|you should|go ahead and|make sure (?:to|you)|try to)\s+/i
+  ];
+  // "add a test for it", "fix the types in that file": refers back to earlier work.
+  const BACK_REFERENCE = /\b(?:it|them|its|their)\b|^(?:this|that|these|those)\b|\b(?:in|for|of|on|to|from|with|inside)\s+(?:this|that|these|those)\b/i;
+
+  function stripFiller(clause) {
+    let c = clause.trim();
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const re of LEADING_FILLER) {
+        const next = c.replace(re, '');
+        if (next !== c) { c = next.trim(); changed = true; }
+      }
+    }
+    return c.replace(/[\s,.;:!?]+$/, '');
+  }
+
+  // Returns the verb the clause starts with, or null.
+  function leadingVerb(clause) {
+    const lower = clause.toLowerCase();
+    return SCOPE_CHECK_VERBS.find((v) => lower === v || lower.startsWith(v + ' ')) || null;
+  }
+
+  // Split a prompt into separate tasks. Only clauses that start with an action verb
+  // count; a clause that refers back to earlier work is a sub-step, not a new task.
+  function detectTasks(text) {
+    const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+    const listLines = lines.filter((l) => LIST_ITEM.test(l));
+    const clauses = listLines.length >= SCOPE_CHECK_MIN_TASKS
+      ? listLines.map((l) => l.replace(LIST_ITEM, ''))
+      : lines
+        .flatMap((l) => l.split(/[.!?;]+\s+|,\s*|\s+(?:and also|and then|and|also|then|plus)\s+/i));
+
+    const tasks = [];
+    for (const raw of clauses) {
+      const clause = stripFiller(raw || '');
+      const verb = leadingVerb(clause);
+      if (!verb) continue;
+      const object = clause.slice(verb.length).trim();
+      if (!object) continue;
+      if (BACK_REFERENCE.test(object) && tasks.length) continue; // sub-step of the previous task
+      if (!tasks.some((t) => t.toLowerCase() === clause.toLowerCase())) tasks.push(clause);
+    }
+    return tasks;
   }
 
   // Briefly outline the input so the user sees the replacement happened.
@@ -614,7 +687,7 @@
     return range;
   }
 
-  function replaceSelection(job, newText) {
+  function replaceSelection(job, newText, mode) {
     const el = findLiveInput(job);
     if (!el) return false;
     if (el !== job.el) {
@@ -625,7 +698,9 @@
       type: job.type,
       originalValue: job.type === 'field' ? job.el.value : job.el.innerText,
       selectionStart: job.type === 'field' ? job.start : null,
-      selectionEnd: job.type === 'field' ? job.end : null
+      selectionEnd: job.type === 'field' ? job.end : null,
+      mode,
+      newText
     };
     const ok = job.type === 'field'
       ? replaceInTextarea(job, newText)
@@ -635,28 +710,50 @@
   }
 
   // ---------- Undo (Ctrl/Cmd+Z within 5s restores the original text) ----------
+  //
+  // The undo window is also the accept/undo signal for style learning:
+  //   undone   — Ctrl/Cmd+Z inside the window
+  //   accepted — the window runs out, or the user keeps typing (or sends)
+  // A new rewrite replacing this one before either happens counts as neither.
 
   function armUndo(snapshot) {
-    clearUndo();
+    endUndoWindow(null);
     lastRewrite = snapshot;
     window.addEventListener('keydown', onUndoKey, true);
     // Typing after the rewrite means the user has moved on; let normal undo handle it.
-    snapshot.element.addEventListener('beforeinput', clearUndo, { once: true });
-    undoTimer = setTimeout(clearUndo, UNDO_WINDOW_MS);
+    snapshot.element.addEventListener('beforeinput', onEditAfterRewrite, { once: true });
+    undoTimer = setTimeout(() => endUndoWindow('accepted'), UNDO_WINDOW_MS);
   }
 
-  function clearUndo() {
+  function onEditAfterRewrite() {
+    endUndoWindow('accepted');
+  }
+
+  // outcome: 'accepted' | 'undone' | null
+  function endUndoWindow(outcome) {
     clearTimeout(undoTimer);
     window.removeEventListener('keydown', onUndoKey, true);
-    if (lastRewrite) lastRewrite.element.removeEventListener('beforeinput', clearUndo);
+    const snap = lastRewrite;
+    if (snap) snap.element.removeEventListener('beforeinput', onEditAfterRewrite);
     lastRewrite = null;
+    if (outcome === 'accepted' && snap) reportAccepted(snap);
+  }
+
+  // Hand the kept result to the style profile (stored on-device by background.js).
+  function reportAccepted(snap) {
+    if (!LEARNING_MODES.includes(snap.mode) || !snap.newText) return;
+    try {
+      chrome.runtime.sendMessage({
+        action: 'accepted', mode: snap.mode, text: snap.newText, site: location.hostname
+      }).catch(() => {});
+    } catch (_) { /* extension reloaded */ }
   }
 
   function onUndoKey(e) {
     const isUndo = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z';
     if (!isUndo || !lastRewrite) return;
     const snap = lastRewrite;
-    clearUndo();
+    endUndoWindow('undone');
     if (!snap.element.isConnected) return;
     e.preventDefault();
     e.stopImmediatePropagation();

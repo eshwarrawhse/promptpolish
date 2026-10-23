@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Polishd",
-  "version": "1.0.0",
-  "description": "Select a rough prompt draft on ChatGPT, Claude, Gemini, Perplexity, Notion or Google AI Mode and rewrite it into a well-structured LLM prompt.",
+  "version": "1.5.0",
+  "description": "Sharper prompts for coding agents: touch up, improve, tighten or scope-check a prompt before you send it. Works in ChatGPT, Claude, Gemini, Perplexity, Notion and Google AI Mode.",
   "permissions": [
     "activeTab",
     "storage",

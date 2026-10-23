@@ -66,17 +66,54 @@
       transition: border-color 150ms ease;
     }
     input:focus, textarea:focus { border-color: #FF8C00; }
-    textarea {
-      min-height: 64px;
-      resize: vertical;
-      line-height: 1.4;
-    }
     .section {
       margin-top: 20px;
       padding-top: 16px;
       border-top: 1px solid #222;
     }
     .section label { font-size: 11px; color: #999; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .row label { margin: 0; }
+    .hint { font-size: 11px; color: #666; line-height: 1.4; margin-top: 6px; }
+    /* on/off switch */
+    input.switch {
+      appearance: none;
+      -webkit-appearance: none;
+      flex: none;
+      width: 30px;
+      height: 16px;
+      padding: 0;
+      border: 1px solid #444;
+      border-radius: 999px;
+      background: #222;
+      position: relative;
+      cursor: pointer;
+      transition: background 150ms ease, border-color 150ms ease;
+    }
+    input.switch::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #777;
+      transition: transform 150ms ease, background 150ms ease;
+    }
+    input.switch:checked { background: #FF8C00; border-color: #FF8C00; }
+    input.switch:checked::after { transform: translateX(14px); background: #000; }
+    button.link {
+      width: auto;
+      margin: 6px 0 0;
+      padding: 0;
+      background: none;
+      color: #FF8C00;
+      font-size: 11px;
+      font-weight: 500;
+      text-decoration: underline;
+    }
+    button.link:disabled { color: #555; cursor: default; text-decoration: none; }
     button {
       width: 100%;
       margin-top: 12px;
@@ -107,19 +144,25 @@
   <div class="header">
     <div class="logo" aria-hidden="true">&#x26A1;&#xFE0E;</div>
     <div class="title">polishd</div>
-    <div class="tagline">rewrite prompts instantly</div>
+    <div class="tagline">sharper prompts for coding agents</div>
   </div>
   <label for="key">gemini api key</label>
   <input id="key" type="password" placeholder="paste your gemini api key" autocomplete="off" spellcheck="false" />
   <button id="save">save</button>
   <div id="status" class="status"></div>
 
-  <div class="section">
-    <label for="custom">custom mode prompt</label>
-    <textarea id="custom" placeholder="e.g. rewrite this as a tweet thread" spellcheck="false"></textarea>
-    <button id="save-custom">save prompt</button>
-    <div id="custom-status" class="status"></div>
+  <div class="section" id="style-section">
+    <div class="row">
+      <label for="learn">learn my style</label>
+      <input type="checkbox" id="learn" class="switch" />
+    </div>
+    <div class="hint">improve and tighten match the last few rewrites you kept. stored only on this device, never sent anywhere except inside your own gemini requests.</div>
+    <div class="row">
+      <span id="style-count" class="hint"></span>
+      <button id="clear-style" class="link">clear</button>
+    </div>
   </div>
+  <script src="styleProfile.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
