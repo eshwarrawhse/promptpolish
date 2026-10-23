@@ -89,8 +89,17 @@ function cleanOutput(text) {
 }
 
 // The one Gemini model every API call uses. Flash-Lite has a much higher free-tier
-// daily cap than Flash; swap back to 'gemini-2.5-flash' here if needed.
-const GEMINI_MODEL = 'gemini-2.5-flash-lite';
+// daily cap than Flash. gemini-2.5-flash-lite is closed to new keys; to see what a key
+// can use, open https://generativelanguage.googleapis.com/v1beta/models?key=YOUR_KEY
+const GEMINI_MODEL = 'gemini-3.5-flash-lite';
+
+// Keep "thinking" small so it doesn't eat the 800-token output budget. 2.5 models take
+// a token budget; Gemini 3+ models take a level instead.
+function thinkingConfigFor(model) {
+  if (model.startsWith('gemini-2.5')) return { thinkingBudget: 0 };
+  if (/^gemini-[3-9]/.test(model)) return { thinkingLevel: 'low' };
+  return null;
+}
 
 function callGemini(model, apiKey, systemPrompt, text, temperature) {
   return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
@@ -105,8 +114,7 @@ function callGemini(model, apiKey, systemPrompt, text, temperature) {
       generationConfig: {
         temperature,
         maxOutputTokens: 800,
-        // 2.5 models "think" by default, which would eat into the 800-token output budget.
-        ...(model.startsWith('gemini-2.5') && { thinkingConfig: { thinkingBudget: 0 } })
+        ...(thinkingConfigFor(model) && { thinkingConfig: thinkingConfigFor(model) })
       }
     })
   });
@@ -138,6 +146,7 @@ async function rewrite(text, mode) {
     }
 
     const raw = (data?.candidates?.[0]?.content?.parts || [])
+      .filter((p) => !p.thought) // never paste the model's reasoning into the input
       .map((p) => p.text || '')
       .join('')
       .trim();
