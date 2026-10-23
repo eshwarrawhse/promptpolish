@@ -88,8 +88,9 @@ function cleanOutput(text) {
     .replace(/\n{3,}/g, '\n\n');
 }
 
-// Tried in order; the next one is used if Google reports a model as not found (retired).
-const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-2.5-flash'];
+// The one Gemini model every API call uses. Flash-Lite has a much higher free-tier
+// daily cap than Flash; swap back to 'gemini-2.5-flash' here if needed.
+const GEMINI_MODEL = 'gemini-2.5-flash-lite';
 
 function callGemini(model, apiKey, systemPrompt, text, temperature) {
   return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
@@ -123,13 +124,13 @@ async function rewrite(text, mode) {
   const systemPrompt = basePrompt + anchor.text;
 
   try {
-    let res;
-    for (const model of GEMINI_MODELS) {
-      res = await callGemini(model, api_key, systemPrompt, text, MODE_TEMPERATURE[mode] ?? 0.4);
-      if (res.status !== 404) break;
-    }
+    const res = await callGemini(GEMINI_MODEL, api_key, systemPrompt, text, MODE_TEMPERATURE[mode] ?? 0.4);
 
     const data = await res.json().catch(() => null);
+    // Per-minute or daily quota used up. No retry: say so plainly.
+    if (res.status === 429 || data?.error?.status === 'RESOURCE_EXHAUSTED') {
+      return { error: 'rate limit hit — try again later' };
+    }
     if (!res.ok) {
       const msg = data?.error?.message || `Gemini API error (${res.status})`;
       const badKey = /api key/i.test(msg) || res.status === 401 || res.status === 403;

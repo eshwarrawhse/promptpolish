@@ -8,7 +8,7 @@ Select a prompt you're about to send in ChatGPT, Claude, Gemini, Perplexity, Not
 - **tighten**: same instructions, fewer tokens.
 - **scope-check**: catches prompts that cram 3+ unrelated tasks together and offers to split them.
 
-Rewrites run through Google Gemini with your own API key (`gemini-2.0-flash`, falling back to `gemini-2.5-flash`).
+Rewrites run through Google Gemini (`gemini-2.5-flash-lite`, set by `GEMINI_MODEL` in `background.js`) with your own API key.
 improve and tighten learn your style from the last few rewrites you kept. That history stays in `chrome.storage.local` on your device and can be turned off or cleared in the popup.
 
 ## Install (unpacked)
