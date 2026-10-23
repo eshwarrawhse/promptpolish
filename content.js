@@ -1,5 +1,8 @@
 (() => {
-  const MIN_LENGTH = 10;
+  // Smallest selection that shows the pill: short asks like "add tests" should qualify,
+  // a single word shouldn't.
+  const MIN_SELECTION_CHARS = 6;
+  const MIN_SELECTION_WORDS = 2;
   // Selections longer than this ask for confirmation before calling the API.
   const LONG_TEXT_WORD_LIMIT = 500;
   // Pill buttons. ids must match the MODE_PROMPTS keys in background.js.
@@ -885,7 +888,7 @@
       return;
     }
     const info = readSelection();
-    if (!info || info.text.trim().length <= MIN_LENGTH) {
+    if (!info || info.text.trim().length < MIN_SELECTION_CHARS || countWords(info.text) < MIN_SELECTION_WORDS) {
       removePill();
       target = null;
       return;
