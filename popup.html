@@ -2,31 +2,59 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>PromptPolish</title>
+  <title>polishd</title>
   <style>
+    /* Bundled with the extension (fonts/, OFL) so the popup never depends on a CDN. */
+    @font-face {
+      font-family: 'Space Grotesk';
+      src: url('fonts/SpaceGrotesk-latin.woff2') format('woff2');
+      font-weight: 300 700;
+      font-style: normal;
+      font-display: swap;
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       width: 280px;
-      padding: 16px;
+      padding: 20px;
       background: #111;
       color: #fff;
-      font-family: system-ui, -apple-system, sans-serif;
+      font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
       font-size: 13px;
+      text-transform: lowercase;
     }
+    /* Typed values keep their real case; only the UI text is lowercase. */
+    input, textarea { text-transform: none; font-family: inherit; }
+    ::placeholder { text-transform: lowercase; color: #666; }
     .header {
-      font-variant: small-caps;
-      letter-spacing: 0.08em;
-      color: #888;
-      font-size: 14px;
-      margin-bottom: 14px;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .logo {
+      font-size: 32px;
+      line-height: 1;
+      color: #FF8C00;
+      margin-bottom: 8px;
+    }
+    .title {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: #FF8C00;
+    }
+    .tagline {
+      margin-top: 2px;
+      font-size: 11px;
+      color: #777;
     }
     label {
       display: block;
-      margin-bottom: 6px;
-      color: #ccc;
+      margin-bottom: 8px;
+      color: #bbb;
+      font-size: 12px;
     }
-    input {
+    input, textarea {
+      display: block;
       width: 100%;
       padding: 8px;
       background: #222;
@@ -35,35 +63,106 @@
       border-radius: 6px;
       font-size: 13px;
       outline: none;
+      transition: border-color 150ms ease;
     }
-    input:focus { border-color: #2563eb; }
+    input:focus, textarea:focus { border-color: #FF8C00; }
+    .section {
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid #222;
+    }
+    .section label { font-size: 11px; color: #999; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .row label { margin: 0; }
+    .hint { font-size: 11px; color: #666; line-height: 1.4; margin-top: 6px; }
+    /* on/off switch */
+    input.switch {
+      appearance: none;
+      -webkit-appearance: none;
+      flex: none;
+      width: 30px;
+      height: 16px;
+      padding: 0;
+      border: 1px solid #444;
+      border-radius: 999px;
+      background: #222;
+      position: relative;
+      cursor: pointer;
+      transition: background 150ms ease, border-color 150ms ease;
+    }
+    input.switch::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #777;
+      transition: transform 150ms ease, background 150ms ease;
+    }
+    input.switch:checked { background: #FF8C00; border-color: #FF8C00; }
+    input.switch:checked::after { transform: translateX(14px); background: #000; }
+    button.link {
+      width: auto;
+      margin: 6px 0 0;
+      padding: 0;
+      background: none;
+      color: #FF8C00;
+      font-size: 11px;
+      font-weight: 500;
+      text-decoration: underline;
+    }
+    button.link:disabled { color: #555; cursor: default; text-decoration: none; }
     button {
       width: 100%;
-      margin-top: 10px;
-      padding: 8px;
-      background: #2563eb;
-      color: #fff;
+      margin-top: 12px;
+      padding: 9px;
+      background: #FF8C00;
+      color: #000;
       border: none;
       border-radius: 6px;
       font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
+      text-transform: lowercase;
       cursor: pointer;
+      transition: filter 150ms ease, transform 150ms ease;
     }
-    button:hover { background: #1d4ed8; }
-    #status {
+    button:hover { filter: brightness(1.1); }
+    button:active { transform: scale(0.98); }
+    .status {
       min-height: 16px;
-      margin-top: 8px;
+      margin-top: 10px;
       font-size: 12px;
     }
-    .ok { color: #22c55e; }
+    .ok { color: #FF8C00; }
     .err { color: #ef4444; }
   </style>
 </head>
 <body>
-  <div class="header">PromptPolish</div>
-  <label for="key">Gemini API Key</label>
-  <input id="key" type="password" placeholder="AIza..." autocomplete="off" spellcheck="false" />
-  <button id="save">Save</button>
-  <div id="status"></div>
+  <div class="header">
+    <div class="logo" aria-hidden="true">&#x26A1;&#xFE0E;</div>
+    <div class="title">polishd</div>
+    <div class="tagline">sharper prompts for coding agents</div>
+  </div>
+  <label for="key">gemini api key</label>
+  <input id="key" type="password" placeholder="paste your gemini api key" autocomplete="off" spellcheck="false" />
+  <button id="save">save</button>
+  <div id="status" class="status"></div>
+
+  <div class="section" id="style-section">
+    <div class="row">
+      <label for="learn">learn my style</label>
+      <input type="checkbox" id="learn" class="switch" />
+    </div>
+    <div class="hint">improve and tighten match the last few rewrites you kept. stored only on this device, never sent anywhere except inside your own gemini requests.</div>
+    <div class="row">
+      <span id="style-count" class="hint"></span>
+      <button id="clear-style" class="link">clear</button>
+    </div>
+  </div>
+  <script src="styleProfile.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

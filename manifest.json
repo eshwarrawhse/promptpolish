@@ -1,12 +1,20 @@
 {
   "manifest_version": 3,
-  "name": "PromptPolish",
-  "version": "1.0.0",
-  "description": "Select a rough prompt draft on ChatGPT or Claude and rewrite it into a well-structured LLM prompt.",
-  "permissions": ["activeTab", "storage", "scripting"],
+  "name": "Polishd",
+  "version": "1.5.0",
+  "description": "Sharper prompts for coding agents: touch up, improve, tighten or scope-check a prompt before you send it. Works in ChatGPT, Claude, Gemini, Perplexity, Notion and Google AI Mode.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://claude.ai/*",
+    "https://www.perplexity.ai/*",
+    "https://gemini.google.com/*",
+    "https://www.notion.so/*",
+    "https://www.google.com/*",
     "https://generativelanguage.googleapis.com/*"
   ],
   "background": {
@@ -14,15 +22,43 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://chatgpt.com/*", "https://claude.ai/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://www.perplexity.ai/*",
+        "https://gemini.google.com/*",
+        "https://www.notion.so/*",
+        "https://www.google.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "PromptPolish",
-    "default_icon": { "128": "icon.png" }
+    "default_title": "Polishd",
+    "default_icon": {
+      "128": "icon.png"
+    }
   },
-  "icons": { "128": "icon.png" }
+  "icons": {
+    "128": "icon.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "fonts/*.woff2"
+      ],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://www.perplexity.ai/*",
+        "https://gemini.google.com/*",
+        "https://www.notion.so/*",
+        "https://www.google.com/*"
+      ]
+    }
+  ]
 }
